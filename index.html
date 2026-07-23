@@ -114,6 +114,14 @@
     to { opacity: 1; transform: scale(1); }
   }
   #boardShadow.entering { animation: boardEnter 0.3s cubic-bezier(0.2, 0.8, 0.3, 1); }
+  /* Level-to-level "push": old board slides out left, new board slides in from right. */
+  @keyframes boardSlideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-26px); } }
+  @keyframes boardSlideIn { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: translateX(0); } }
+  #boardShadow.sliding-out { animation: boardSlideOut 0.17s ease-in forwards; }
+  #boardShadow.sliding-in { animation: boardSlideIn 0.3s cubic-bezier(0.2, 0.85, 0.3, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    #boardShadow.sliding-out, #boardShadow.sliding-in { animation: none; }
+  }
   svg { touch-action: none; user-select: none; }
   .thread-path { transition: stroke 0.25s; }
   /* Win celebration: each thread glows and settles in turn — "the weave completes". */
@@ -971,6 +979,25 @@ function playLevelTransition() {
   svg.classList.add('entering');
 }
 
+// Slide the current board out to the left, swap the level, slide the new one in
+// from the right — a directional "push" that reads as moving forward through the
+// deck. Used for Next and level-select jumps (Restart/first-load keep the pop).
+let sliding = false;
+function slideToLevel(changeLevel) {
+  if (sliding) { changeLevel(); playLevelTransition(); return; }
+  sliding = true;
+  svg.classList.remove('entering', 'sliding-in');
+  void svg.getBBox();
+  svg.classList.add('sliding-out');
+  setTimeout(() => {
+    changeLevel();                 // levelIndex update + buildLevel() (rebuilds the SVG)
+    svg.classList.remove('sliding-out');
+    void svg.getBBox();
+    svg.classList.add('sliding-in');
+    setTimeout(() => { svg.classList.remove('sliding-in'); sliding = false; }, 320);
+  }, 170);
+}
+
 function triggerShake(ti) {
   const el = document.getElementById('head-' + ti);
   if (!el) return;
@@ -1256,9 +1283,7 @@ document.getElementById('restartBtn').addEventListener('click', () => {
 document.getElementById('nextBtn').addEventListener('click', () => {
   hideSolveSheet();
   if (levelIndex === LEVELS.length - 1) { showSummary(); return; }
-  levelIndex = Math.min(levelIndex + 1, LEVELS.length - 1);
-  buildLevel();
-  playLevelTransition();
+  slideToLevel(() => { levelIndex = Math.min(levelIndex + 1, LEVELS.length - 1); buildLevel(); });
 });
 
 document.querySelectorAll('.rate-btn').forEach((btn) => {
@@ -1305,10 +1330,9 @@ function openLevelSelect() {
         chip.appendChild(dot);
       }
       chip.addEventListener('click', () => {
-        levelIndex = globalIdx;
-        buildLevel();
-        playLevelTransition();
+        const gi = globalIdx;
         closeLevelSelect();
+        slideToLevel(() => { levelIndex = gi; buildLevel(); });
       });
       grid.appendChild(chip);
     });
