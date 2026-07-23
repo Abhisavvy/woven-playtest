@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<!-- VERTICAL SLICE - NOT FOR PRODUCTION -->
+<!-- Validation Question: does a cold-start player experience "deduce the order —
+     feel smart" across a genuine 50-level difficulty progression covering the
+     full mechanic set (walls, one-way, custom void-shaped grids, base/switch/
+     logic/toggling gates, weave, overlap, 2-4 threads)?
+     Date: 2026-07-23
+     v4: full 50-level content pass. Engine extended to a faithful, generalized
+     port of Woven.Core (voidMask, one-way, weave, overlap, all gate types,
+     N threads) — ported from a Node-verified engine.mjs, not re-derived here,
+     so runtime and the offline solver that verified every level share one
+     source (the parity principle from Woven.Core.Rules story 006). Every
+     level was solver-verified before inclusion: 38/50 confirmed uniquely
+     solvable, 12 (the largest boards) confirmed solvable with uniqueness not
+     exhaustively proven within the verifier's search budget — logged, not
+     hidden. Rendering is resize-to-fit (cell size computed from grid
+     dimensions to fill a constant on-screen footprint), not zoom, so every
+     level fits a phone screen without scrolling mid-drag. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>WOVEN — vertical slice (browser)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #F3ECDD;
+    --cream-panel: #FAF6EE;
+    --ink: #3A332A;
+    --ink-soft: #8a8172;
+    --amber: #C77A21;
+    --teal: #0E7C86;
+    --violet: #7A5CC7;
+    --moss: #4C8C4A;
+    --gate-closed: #9c4a45;
+    --gate-open: #6b9457;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--cream);
+    font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--ink);
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  #topBand {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 18px 20px 6px;
+  }
+  #topBand .top-right { display: flex; align-items: center; gap: 4px; }
+  #optionsBtn { font-size: 17px; padding: 5px 8px; line-height: 1; }
+  #coinChip { font-size: 13px; font-weight: 700; color: var(--ink); display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; background: rgba(199,122,33,0.12); border-radius: 11px; font-variant-numeric: tabular-nums; }
+  #hintBtn .hint-cost { font-size: 11px; font-weight: 700; color: var(--amber); background: rgba(199,122,33,0.14); border-radius: 8px; padding: 1px 5px; margin-left: 5px; }
+  #hintBtn:disabled .hint-cost { color: var(--ink-soft); background: rgba(58,51,42,0.08); }
+  /* Options overlay */
+  #optionsOverlay { position: fixed; inset: 0; background: rgba(58,51,42,0.5); z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; }
+  #optionsOverlay.visible { display: flex; }
+  #optionsCard { background: #fff; border-radius: 20px; padding: 22px; max-width: 380px; width: 100%; }
+  #optionsCard h2 { font-size: 16px; margin: 0 0 14px; }
+  .opt-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(58,51,42,0.08); font-size: 15px; }
+  .opt-toggle { min-width: 58px; background: rgba(58,51,42,0.08); box-shadow: none; color: var(--ink-soft); font-weight: 700; }
+  .opt-toggle.on { background: var(--moss); color: #fdfaf3; }
+  .opt-note { font-size: 12px; color: var(--ink-soft); margin: 10px 0 0; line-height: 1.4; }
+  .opt-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  #wordmark {
+    position: relative; padding-bottom: 7px;
+    font-size: 15px; font-weight: 700; letter-spacing: 0.08em; color: var(--ink);
+    cursor: pointer;
+  }
+  #wordmark::after {
+    content: ''; position: absolute; left: 1px; bottom: 0;
+    width: 22px; height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--amber) 50%, var(--teal) 50%);
+  }
+  #levelSelectBtn {
+    display: flex; align-items: center; gap: 9px;
+    background: transparent; box-shadow: none; border-radius: 12px;
+    padding: 6px 8px; margin: -6px -8px 0 0;
+  }
+  #levelSelectBtn:hover:not(:disabled) { background: rgba(58,51,42,0.05); box-shadow: none; transform: none; }
+  #levelSelectBtn:active:not(:disabled) { transform: scale(0.97); box-shadow: none; }
+  #levelSelectBtn .ls-icon { color: var(--ink-soft); flex-shrink: 0; }
+  #levelInfo { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  #levelLabel { font-size: 12px; font-weight: 600; color: var(--ink-soft); transition: opacity 0.2s; }
+  #tierLabel { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); text-transform: uppercase; }
+  #boardWrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    min-height: 0;
+  }
+  #boardShadow {
+    filter: drop-shadow(0 6px 18px rgba(58,51,42,0.14));
+    max-width: 100%;
+    max-height: 100%;
+  }
+  @keyframes boardEnter {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  #boardShadow.entering { animation: boardEnter 0.3s cubic-bezier(0.2, 0.8, 0.3, 1); }
+  svg { touch-action: none; user-select: none; }
+  .thread-path { transition: stroke 0.25s; }
+  .gate-bar { transition: fill 0.35s ease; }
+  .head-marker { transition: transform 0.12s ease-out; transform-origin: center; }
+  .head-marker.pulse { animation: settlePulse 0.22s ease-out; }
+  .head-marker.shake { animation: shakeX 0.26s ease; }
+  @keyframes settlePulse { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  @keyframes shakeX { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4.5px); } 75% { transform: translateX(4.5px); } }
+  .invite-ring { animation: invitePulse 2s ease-in-out infinite; transform-origin: center; }
+  @keyframes invitePulse { 0%, 100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 0.05; transform: scale(1.7); } }
+  #bottomBand {
+    display: flex; justify-content: center; align-items: center; gap: 8px;
+    padding: 12px 16px 20px; flex-wrap: wrap;
+  }
+  button {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    padding: 11px 20px; border-radius: 14px; border: none;
+    background: #ffffff; color: var(--ink);
+    box-shadow: 0 2px 6px rgba(58,51,42,0.10);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease, color 0.15s ease;
+  }
+  button:hover:not(:disabled) { box-shadow: 0 4px 10px rgba(58,51,42,0.16); transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: scale(0.96); box-shadow: 0 1px 2px rgba(58,51,42,0.10); }
+  button:disabled { opacity: 0.35; box-shadow: none; cursor: default; }
+  button.primary { background: var(--ink); color: #fdfaf3; }
+  button.primary:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(58,51,42,0.28); }
+  button.ghost { background: transparent; box-shadow: none; color: var(--ink-soft); padding: 11px 14px; }
+  button.ghost:hover:not(:disabled) { color: var(--ink); background: rgba(58,51,42,0.05); box-shadow: none; transform: none; }
+  button.ghost:active:not(:disabled) { transform: scale(0.97); }
+  .btn-icon { font-size: 14px; line-height: 1; opacity: 0.75; }
+  #message {
+    position: fixed; left: 50%; bottom: 108px;
+    transform: translateX(-50%) translateY(6px) scale(0.98); opacity: 0;
+    background: rgba(255,255,255,0.97); padding: 13px 22px; border-radius: 16px;
+    font-size: 15px; text-align: center; max-width: 340px;
+    box-shadow: 0 4px 14px rgba(58,51,42,0.12); pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  #message.visible { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  #message.deadend { background: #f6e9da; }
+  #message.solved { background: #eef4e3; font-weight: 700; }
+  #message.hint { background: rgba(255,255,255,0.92); color: var(--ink-soft); font-weight: 600; }
+  #message .sub { display: block; font-weight: 400; font-size: 12px; color: var(--ink-soft); margin-top: 3px; }
+
+  /* Difficulty feedback strip */
+  #feedbackStrip {
+    display: none; justify-content: center; gap: 8px; padding: 0 16px 8px;
+  }
+  #feedbackStrip.visible { display: flex; }
+  .fb-btn {
+    padding: 8px 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
+    background: #ffffff; color: var(--ink-soft); box-shadow: 0 1px 4px rgba(58,51,42,0.08);
+  }
+  .fb-btn.selected { background: var(--ink); color: #fdfaf3; }
+
+  /* Level-select overlay */
+  #levelSelect {
+    position: fixed; inset: 0; background: var(--cream); z-index: 10;
+    display: none; flex-direction: column; max-width: 480px; margin: 0 auto;
+  }
+  #levelSelect.visible { display: flex; }
+  #levelSelectHeader { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 8px; gap: 8px; }
+  #levelSelectHeader h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: 0.04em; }
+  #levelSelectHeader .header-actions { display: flex; align-items: center; gap: 2px; }
+  #feedbackFromSelectBtn { font-size: 13px; color: var(--amber); }
+  #feedbackFromSelectBtn:hover:not(:disabled) { color: var(--amber); background: rgba(199,122,33,0.08); }
+  #tierList { flex: 1; overflow-y: auto; padding: 8px 16px 24px; }
+  .tier-block { margin-bottom: 20px; }
+  .tier-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); margin: 0 0 8px 4px; }
+  .tier-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .level-chip {
+    aspect-ratio: 1; border-radius: 12px; border: none; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; color: var(--ink);
+    box-shadow: 0 1px 4px rgba(58,51,42,0.08); cursor: pointer; position: relative;
+  }
+  .level-chip.done { background: var(--ink); color: #fdfaf3; }
+  .level-chip.current { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .level-chip .diff-dot { position: absolute; bottom: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; }
+  .level-chip .spike { position: absolute; top: 3px; left: 5px; font-size: 8px; letter-spacing: -1.5px; line-height: 1; }
+  .level-chip .spike.hard { color: var(--amber); }
+  .level-chip .spike.xhard { color: var(--gate-closed); }
+
+  /* End-of-session summary */
+  #summaryOverlay {
+    position: fixed; inset: 0; background: rgba(58,51,42,0.5); z-index: 20;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #summaryOverlay.visible { display: flex; }
+  #summaryCard { background: #fff; border-radius: 20px; padding: 22px; max-width: 420px; width: 100%; max-height: 80vh; overflow-y: auto; }
+  #summaryCard h2 { font-size: 16px; margin: 0 0 6px; }
+  .summary-lede { font-size: 13px; line-height: 1.4; color: var(--ink-soft); margin: 0 0 12px; }
+  .summary-lede strong { color: var(--ink); }
+  #summaryText { font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; background: var(--cream); border-radius: 10px; padding: 12px; white-space: pre-wrap; max-height: 260px; overflow-y: auto; }
+  #summaryCard .actions { display: flex; gap: 10px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topBand">
+    <span id="wordmark">WOVEN</span>
+    <div class="top-right">
+      <span id="coinChip" aria-label="Coins">🪙 <span id="coinCount">0</span></span>
+      <button id="optionsBtn" class="ghost" aria-label="Options">⚙</button>
+      <button id="levelSelectBtn" aria-label="Choose a level">
+        <span id="levelInfo">
+          <span id="tierLabel"></span>
+          <span id="levelLabel"></span>
+        </span>
+        <svg class="ls-icon" viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <rect x="1" y="1" width="7" height="7" rx="1.6"></rect>
+          <rect x="12" y="1" width="7" height="7" rx="1.6"></rect>
+          <rect x="1" y="12" width="7" height="7" rx="1.6"></rect>
+          <rect x="12" y="12" width="7" height="7" rx="1.6"></rect>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div id="boardWrap">
+    <svg id="boardShadow"></svg>
+  </div>
+  <div id="feedbackStrip">
+    <button class="fb-btn" data-v="easy">Easy</button>
+    <button class="fb-btn" data-v="medium">Medium</button>
+    <button class="fb-btn" data-v="hard">Hard</button>
+  </div>
+  <div id="bottomBand">
+    <button id="undoBtn"><span class="btn-icon">↶</span>Undo</button>
+    <button id="restartBtn" class="ghost"><span class="btn-icon">↻</span>Restart</button>
+    <button id="hintBtn" class="ghost"><span class="btn-icon">💡</span>Hint<span class="hint-cost">100</span></button>
+    <button id="nextBtn" class="primary" style="display:none">Next<span class="btn-icon">→</span></button>
+  </div>
+</div>
+<div id="message"></div>
+
+<div id="levelSelect">
+  <div id="levelSelectHeader">
+    <h1>Select a level</h1>
+    <div class="header-actions">
+      <button class="ghost" id="feedbackFromSelectBtn">✉ Send feedback</button>
+      <button class="ghost" id="closeSelectBtn">Close</button>
+    </div>
+  </div>
+  <div id="tierList"></div>
+</div>
+
+<div id="optionsOverlay">
+  <div id="optionsCard">
+    <h2>Options</h2>
+    <div class="opt-row"><span>Sound</span><button id="soundToggle" class="opt-toggle">On</button></div>
+    <div class="opt-row"><span>Haptics (vibration)</span><button id="hapticsToggle" class="opt-toggle">On</button></div>
+    <p class="opt-note">Haptics work on most Android devices; iPhone browsers don't support vibration.</p>
+    <div class="opt-actions">
+      <button class="primary" id="optSubmitBtn">✉ Submit feedback</button>
+      <button class="ghost" id="optResetBtn">Reset progress</button>
+      <button class="ghost" id="closeOptionsBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="summaryOverlay">
+  <div id="summaryCard">
+    <h2>Send your feedback</h2>
+    <p class="summary-lede">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your difficulty ratings reach us.</p>
+    <div id="summaryText"></div>
+    <div class="actions">
+      <button class="ghost" id="closeSummaryBtn">Close</button>
+      <button class="primary" id="copySummaryBtn">Copy to send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// ENGINE — faithful, generalized port of Woven.Core (Board + Rules).
+// Ported from scratchpad/engine.mjs (Node-verified via the offline solver
+// used to check every one of the 50 levels) — same source, so runtime and
+// verifier can never diverge (the parity principle from story 006).
+// ============================================================
+function rowCol(index, width) { return [Math.floor(index / width), index % width]; }
+function cidx(row, col, width) { return row * width + col; }
+
+const ElementKind = { NONE: 'None', VOID: 'Void', ONE_WAY: 'OneWay', WEAVE: 'Weave', OVERLAP: 'OverlapNode', BLEND: 'Blend' };
+const Axis = { H: 'H', V: 'V' };
+const LaneState = { EMPTY: 'Empty', A: 'ThreadA', B: 'ThreadB' };
+const Direction = { N: 1, S: 2, E: 4, W: 8 };
+
+class Grid {
+  constructor(width, height, voidMask) {
+    this.width = width; this.height = height;
+    this.voidMask = voidMask || new Array(width * height).fill(false);
+  }
+  isVoid(cell) { return this.voidMask[cell]; }
+  neighbors(cell) {
+    const [r, c] = rowCol(cell, this.width);
+    const out = [];
+    if (r > 0) out.push(cidx(r - 1, c, this.width));
+    if (r < this.height - 1) out.push(cidx(r + 1, c, this.width));
+    if (c > 0) out.push(cidx(r, c - 1, this.width));
+    if (c < this.width - 1) out.push(cidx(r, c + 1, this.width));
+    return out.filter((n) => !this.isVoid(n));
+  }
+}
+
+class BoardElements {
+  constructor(grid) {
+    this.grid = grid;
+    const n = grid.width * grid.height;
+    this.element = new Array(n).fill(ElementKind.NONE);
+    this.wallRight = new Array(n).fill(false);
+    this.wallDown = new Array(n).fill(false);
+    this.gateRight = new Array(n).fill(null);
+    this.gateDown = new Array(n).fill(null);
+    this.oneWayMask = new Map();
+    this.laneH = new Map();
+    this.laneV = new Map();
+    this.overlapMembers = new Map();
+  }
+  edgeInfo(a, b) {
+    const w = this.grid.width;
+    const [ra, ca] = rowCol(a, w), [rb, cb] = rowCol(b, w);
+    if (ra === rb && Math.abs(ca - cb) === 1) return { owner: ca < cb ? a : b, right: true };
+    if (ca === cb && Math.abs(ra - rb) === 1) return { owner: ra < rb ? a : b, right: false };
+    return null;
+  }
+  setWall(a, b) { const e = this.edgeInfo(a, b); if (e) { if (e.right) this.wallRight[e.owner] = true; else this.wallDown[e.owner] = true; } }
+  hasWall(a, b) { const e = this.edgeInfo(a, b); if (!e) return false; return e.right ? this.wallRight[e.owner] : this.wallDown[e.owner]; }
+  setGate(a, b, gateId) { const e = this.edgeInfo(a, b); if (e) { if (e.right) this.gateRight[e.owner] = gateId; else this.gateDown[e.owner] = gateId; } }
+  gateOn(a, b) { const e = this.edgeInfo(a, b); if (!e) return null; return e.right ? this.gateRight[e.owner] : this.gateDown[e.owner]; }
+  elementAt(cell) { return this.grid.isVoid(cell) ? ElementKind.VOID : this.element[cell]; }
+  setOneWay(cell, mask) { this.element[cell] = ElementKind.ONE_WAY; this.oneWayMask.set(cell, mask); }
+  canEnterFrom(cell, from) { if (this.elementAt(cell) !== ElementKind.ONE_WAY) return true; return ((this.oneWayMask.get(cell) || 0) & from) !== 0; }
+  setWeaveCell(cell) { this.element[cell] = ElementKind.WEAVE; this.laneH.set(cell, LaneState.EMPTY); this.laneV.set(cell, LaneState.EMPTY); }
+  setLane(cell, axis, state) { (axis === Axis.H ? this.laneH : this.laneV).set(cell, state); }
+  lane(cell, axis) { const m = axis === Axis.H ? this.laneH : this.laneV; return m.has(cell) ? m.get(cell) : LaneState.EMPTY; }
+  setOverlapNode(cell, tA, tB) { this.element[cell] = ElementKind.OVERLAP; this.overlapMembers.set(cell, [tA, tB]); }
+  setBlendNode(cell) { this.element[cell] = ElementKind.BLEND; }
+  isOverlapMember(cell, threadIndex) { const m = this.overlapMembers.get(cell); return !!m && (m[0] === threadIndex || m[1] === threadIndex); }
+}
+
+class ThreadModel {
+  constructor(checkpoints) {
+    this.checkpoints = checkpoints;
+    this.path = [checkpoints[0]];
+    this.progress = 1;
+  }
+  get head() { return this.path[this.path.length - 1]; }
+  isCheckpoint(cell) { return this.checkpoints.indexOf(cell); }
+  appendToPath(cell, advances) { this.path.push(cell); if (advances) this.progress++; }
+  removeLastFromPath() {
+    const removed = this.path.pop();
+    const i = this.checkpoints.indexOf(removed);
+    if (i !== -1 && i === this.progress - 1) this.progress--;
+  }
+  resetToStart() { const s = this.path[0]; this.path = [s]; this.progress = 1; }
+}
+
+class GateStateProvider {
+  constructor(threads, gates) { this.threads = threads; this.gates = gates; }
+  reached(t) { return this.threads[t.threadIndex].progress > t.checkpointIndex; }
+  evaluate(triggers, op) { return op === 'AllOf' ? triggers.every((t) => this.reached(t)) : triggers.some((t) => this.reached(t)); }
+  isOpen(gateId) {
+    const def = this.gates.get(gateId);
+    const opened = this.evaluate(def.openTriggers, def.openOp);
+    if (def.closeTriggers.length === 0) return opened;
+    return opened && !this.evaluate(def.closeTriggers, def.closeOp);
+  }
+}
+
+class RulesEngine {
+  constructor(grid, elements, threads, gateState) {
+    this.grid = grid; this.elements = elements; this.threads = threads; this.gateState = gateState;
+    this.owner = new Array(grid.width * grid.height).fill(null);
+    // cell -> thread that owns it as a numbered checkpoint; no other thread may enter it.
+    this.checkpointOwner = {};
+    for (let i = 0; i < threads.length; i++) for (const cp of threads[i].checkpoints) this.checkpointOwner[cp] = i;
+    // Blend: single BLEND cell is the merged thread's start and each feeder's final checkpoint.
+    this.blendNode = null; this.feeders = []; this.blendThread = null;
+    for (let i = 0; i < grid.width * grid.height; i++) if (elements.element[i] === ElementKind.BLEND) this.blendNode = i;
+    if (this.blendNode !== null) threads.forEach((t, i) => {
+      if (t.checkpoints[0] === this.blendNode) this.blendThread = i;
+      else if (t.checkpoints[t.checkpoints.length - 1] === this.blendNode) this.feeders.push(i);
+    });
+    for (let i = 0; i < threads.length; i++) this._claimCell(i, threads[i].head, Axis.H);
+    this.moveLog = []; this.gestureStarts = []; this.redoScratch = [];
+  }
+  _axisOfTravel(from, to) { const w = this.grid.width; return rowCol(from, w)[0] === rowCol(to, w)[0] ? Axis.H : Axis.V; }
+  _directionInto(from, to) {
+    const w = this.grid.width;
+    const [rf, cf] = rowCol(from, w), [rt, ct] = rowCol(to, w);
+    if (rf === rt) return cf < ct ? Direction.W : Direction.E;
+    return rf < rt ? Direction.N : Direction.S;
+  }
+  _claimCell(ti, cell, axis) {
+    const el = this.elements.elementAt(cell);
+    if (el === ElementKind.WEAVE) this.elements.setLane(cell, axis, LaneState.A);
+    else if (el !== ElementKind.OVERLAP && el !== ElementKind.BLEND) this.owner[cell] = ti;
+  }
+  _unclaimCell(cell, axis) {
+    const el = this.elements.elementAt(cell);
+    if (el === ElementKind.WEAVE) this.elements.setLane(cell, axis, LaneState.EMPTY);
+    else if (el !== ElementKind.OVERLAP && el !== ElementKind.BLEND) this.owner[cell] = null;
+  }
+  _feedersComplete() { return this.feeders.every((f) => this.threads[f].progress >= this.threads[f].checkpoints.length); }
+  checkLegality(ti, target) {
+    const thread = this.threads[ti];
+    const head = thread.head;
+    // A completed head is frozen: a thread stops at its final numbered checkpoint
+    // and never wanders past it (parity with the offline verifier + core-mechanic).
+    if (thread.progress >= thread.checkpoints.length) return { ok: false, reason: 'ThreadComplete' };
+    if (this.blendNode !== null && ti === this.blendThread && !this._feedersComplete()) return { ok: false, reason: 'BlendNotReady' };
+    const cpOwner = this.checkpointOwner[target];
+    if (cpOwner !== undefined && cpOwner !== ti && this.elements.elementAt(target) !== ElementKind.BLEND) return { ok: false, reason: 'OthersCheckpoint' };
+    if (!this.grid.neighbors(head).includes(target)) return { ok: false, reason: 'NotAdjacent' };
+    if (this.elements.hasWall(head, target)) return { ok: false, reason: 'Wall' };
+    const gate = this.elements.gateOn(head, target);
+    if (gate !== null && !this.gateState.isOpen(gate)) return { ok: false, reason: 'GateClosed' };
+    if (!this.elements.canEnterFrom(target, this._directionInto(head, target))) return { ok: false, reason: 'OneWayBlocked' };
+    const axis = this._axisOfTravel(head, target);
+    const el = this.elements.elementAt(target);
+    if (el === ElementKind.WEAVE) {
+      if (this.elements.lane(target, axis) !== LaneState.EMPTY) return { ok: false, reason: 'CellOccupied' };
+    } else if (el === ElementKind.OVERLAP) {
+      if (!this.elements.isOverlapMember(target, ti)) return { ok: false, reason: 'CellOccupied' };
+      if (thread.path.includes(target)) return { ok: false, reason: 'AlreadyVisited' };
+    } else if (el === ElementKind.BLEND) {
+      if (thread.path.includes(target)) return { ok: false, reason: 'AlreadyVisited' };
+    } else if (this.owner[target] !== null) return { ok: false, reason: 'CellOccupied' };
+    const cp = thread.isCheckpoint(target);
+    if (cp !== -1 && cp !== thread.progress) return { ok: false, reason: 'CheckpointOutOfOrder' };
+    return { ok: true, axis, isCheckpoint: cp !== -1, checkpointIndex: cp };
+  }
+  canExtend(ti, target) { return this.checkLegality(ti, target).ok; }
+  tryExtend(ti, target) {
+    const thread = this.threads[ti];
+    const legality = this.checkLegality(ti, target);
+    if (!legality.ok) return legality;
+    this._claimCell(ti, target, legality.axis);
+    thread.appendToPath(target, legality.isCheckpoint);
+    this.moveLog.push({ thread: ti, cell: target });
+    this.redoScratch = [];
+    return { ok: true };
+  }
+  tryRetract(ti) {
+    const thread = this.threads[ti];
+    if (thread.path.length <= 1) return { ok: false, reason: 'NothingToRetract' };
+    if (this.gestureStarts.length > 0 && this.moveLog.length <= this.gestureStarts[this.gestureStarts.length - 1]) return { ok: false, reason: 'GestureFloor' };
+    const cell = thread.head;
+    const prev = thread.path[thread.path.length - 2];
+    this._unclaimCell(cell, this._axisOfTravel(prev, cell));
+    thread.removeLastFromPath();
+    this.moveLog.pop();
+    this.redoScratch = [];
+    return { ok: true };
+  }
+  beginGesture() { this.gestureStarts.push(this.moveLog.length); }
+  get canUndo() { return this.gestureStarts.length > 0; }
+  restart() {
+    this.moveLog = []; this.gestureStarts = []; this.redoScratch = [];
+    this._replay();
+  }
+  _replay() {
+    this.owner.fill(null);
+    const n = this.grid.width * this.grid.height;
+    for (let i = 0; i < n; i++) if (this.elements.elementAt(i) === ElementKind.WEAVE) { this.elements.setLane(i, Axis.H, LaneState.EMPTY); this.elements.setLane(i, Axis.V, LaneState.EMPTY); }
+    for (const t of this.threads) t.resetToStart();
+    for (let i = 0; i < this.threads.length; i++) this._claimCell(i, this.threads[i].head, Axis.H);
+    for (const move of this.moveLog) {
+      const thread = this.threads[move.thread];
+      const axis = this._axisOfTravel(thread.head, move.cell);
+      const cp = thread.isCheckpoint(move.cell);
+      this._claimCell(move.thread, move.cell, axis);
+      thread.appendToPath(move.cell, cp !== -1);
+    }
+  }
+  fillTarget() {
+    let total = 0;
+    const n = this.grid.width * this.grid.height;
+    for (let i = 0; i < n; i++) { const el = this.elements.elementAt(i); if (el === ElementKind.VOID) continue; total += el === ElementKind.WEAVE ? 2 : 1; }
+    return total;
+  }
+  _sharedOverlapUnits() {
+    let shared = 0;
+    const n = this.grid.width * this.grid.height;
+    for (let i = 0; i < n; i++) {
+      const el = this.elements.elementAt(i);
+      if (el !== ElementKind.OVERLAP && el !== ElementKind.BLEND) continue;
+      let visits = 0;
+      for (const t of this.threads) if (t.path.includes(i)) visits++;
+      if (visits > 1) shared += visits - 1;
+    }
+    return shared;
+  }
+  isSolved() {
+    let sum = 0;
+    for (const t of this.threads) sum += t.path.length;
+    if (sum - this._sharedOverlapUnits() !== this.fillTarget()) return false;
+    const n = this.grid.width * this.grid.height;
+    for (let i = 0; i < n; i++) {
+      if (this.elements.elementAt(i) !== ElementKind.WEAVE) continue;
+      if (this.elements.lane(i, Axis.H) === LaneState.EMPTY || this.elements.lane(i, Axis.V) === LaneState.EMPTY) return false;
+    }
+    for (const t of this.threads) if (t.progress < t.checkpoints.length) return false;
+    return true;
+  }
+  hasAnyLegalExtension() {
+    for (let i = 0; i < this.threads.length; i++) for (const n of this.grid.neighbors(this.threads[i].head)) if (this.canExtend(i, n)) return true;
+    return false;
+  }
+  isDeadEnd() { if (this.isSolved()) return false; return !this.hasAnyLegalExtension(); }
+}
+
+function buildEngine(def) {
+  const grid = new Grid(def.width, def.height, def.voidMask);
+  const elements = new BoardElements(grid);
+  for (const w of def.walls || []) elements.setWall(w[0], w[1]);
+  for (const ow of def.oneWay || []) elements.setOneWay(ow.cell, ow.mask);
+  for (const wc of def.weaveCells || []) elements.setWeaveCell(wc);
+  for (const ov of def.overlapNodes || []) elements.setOverlapNode(ov.cell, ov.threadA, ov.threadB);
+  if (def.blendNode !== undefined && def.blendNode !== null) elements.setBlendNode(def.blendNode);
+  const threads = def.threads.map((cp) => new ThreadModel(cp));
+  const gates = new Map();
+  for (const g of def.gates || []) {
+    gates.set(g.id, { openTriggers: g.openTriggers, openOp: g.openOp, closeTriggers: g.closeTriggers || [], closeOp: g.closeOp || 'AllOf' });
+    elements.setGate(g.from, g.to, g.id);
+  }
+  const gateState = new GateStateProvider(threads, gates);
+  return new RulesEngine(grid, elements, threads, gateState);
+}
+
+// ============================================================
+// LEVEL DATA — 50 levels, solver-verified offline (see scratchpad/).
+// ============================================================
+const LEVELS = [{"id":1,"tier":1,"tags":["core"],"width":3,"height":3,"threads":[[0,7,8],[5,4]],"walls":[]},{"id":2,"tier":1,"tags":["core"],"width":4,"height":3,"threads":[[9,0,6],[2,11,10]],"walls":[]},{"id":3,"tier":1,"tags":["core"],"width":4,"height":4,"threads":[[15,12,4],[0,3,10,5,6]],"walls":[]},{"id":4,"tier":1,"tags":["shape"],"width":4,"height":4,"threads":[[5,1,7],[11,10,12,13]],"walls":[],"voidMask":[false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false]},{"id":5,"tier":1,"tags":["core"],"width":5,"height":4,"threads":[[14,17,10,1,3],[4,13,6,7]],"walls":[]},{"id":6,"tier":1,"tags":["shape"],"width":5,"height":4,"threads":[[10,1,8],[9,18,11,7]],"walls":[],"voidMask":[true,false,false,false,true,false,false,false,false,false,false,false,false,false,false,true,false,false,false,true]},{"id":7,"tier":1,"tags":["core"],"width":5,"height":5,"threads":[[22,19,4,1,5],[10,21,6,13,17,12]],"walls":[]},{"id":8,"tier":1,"tags":["walls"],"width":5,"height":5,"threads":[[6,4,14],[19,15,13,12]],"walls":[[3,8],[5,10]]},{"width":7,"height":6,"threads":[[11,13,27,39,35],[28,0,10,22,32,26,18,24]],"walls":[],"id":9,"tier":1,"diff":"hard","tags":["core","hard"]},{"width":7,"height":6,"threads":[[37,41,13,3,7,14],[21,29,9,19,26,31,17,24]],"walls":[],"id":10,"tier":1,"diff":"xhard","tags":["core","extra-hard"]},{"id":11,"tier":2,"tags":["gate"],"width":4,"height":4,"threads":[[7,1,8,12],[13,11,5,6]],"walls":[],"gates":[{"id":"g11_4","from":0,"to":4,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":12,"tier":2,"tags":["gate","shape"],"width":4,"height":4,"threads":[[0,12,15],[11,2,9,10]],"walls":[],"voidMask":[false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false],"gates":[{"id":"g12_3","from":12,"to":13,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":13,"tier":2,"tags":["gate"],"width":5,"height":4,"threads":[[15,0,3,14,18],[17,6,13,12]],"walls":[],"gates":[{"id":"g13_6","from":3,"to":4,"openTriggers":[{"threadIndex":1,"checkpointIndex":2}],"openOp":"AllOf"}]},{"id":14,"tier":2,"tags":["gate","shape"],"width":5,"height":4,"threads":[[10,1,3],[8,11,18,9]],"walls":[],"voidMask":[true,false,false,false,true,false,false,false,false,false,false,false,false,false,false,true,false,false,false,true],"gates":[{"id":"g14_3","from":1,"to":2,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":15,"tier":2,"tags":["gate"],"width":5,"height":5,"threads":[[4,1,10,21,24,14],[9,6,17,13,12]],"walls":[],"gates":[{"id":"g15_7","from":15,"to":20,"openTriggers":[{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"}]},{"id":16,"tier":2,"tags":["gate","walls","shape"],"width":5,"height":5,"threads":[[2,24,23],[22,6,12]],"walls":[[13,14]],"voidMask":[true,true,false,true,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false],"gates":[{"id":"g16_4","from":14,"to":19,"openTriggers":[{"threadIndex":1,"checkpointIndex":2}],"openOp":"AllOf"}]},{"id":17,"tier":2,"tags":["gate","switch"],"width":5,"height":5,"threads":[[14,23,20,5,2,3],[4,7,16,13,12]],"walls":[],"gates":[{"id":"g17_6","from":20,"to":15,"openTriggers":[{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"},{"id":"g17_8","from":10,"to":5,"openTriggers":[{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"}]},{"id":18,"tier":2,"tags":["gate"],"width":6,"height":5,"threads":[[2,5,23,27,25],[24,6,7,20,16,8,15]],"walls":[],"gates":[{"id":"g18_6","from":23,"to":29,"openTriggers":[{"threadIndex":1,"checkpointIndex":6}],"openOp":"AllOf"}]},{"width":7,"height":6,"threads":[[16,20,40,36,14,0],[1,5,11,15,29,23,33,25]],"walls":[],"gates":[{"id":"gx","from":39,"to":38,"openTriggers":[{"threadIndex":1,"checkpointIndex":7}],"openOp":"AllOf"}],"id":19,"tier":2,"diff":"hard","tags":["gate","hard"]},{"width":7,"height":6,"threads":[[30,28,14,2,6,34],[41,31,26,19,9,8,23,17]],"walls":[],"gates":[{"id":"gx","from":0,"to":1,"openTriggers":[{"threadIndex":1,"checkpointIndex":7}],"openOp":"AllOf"}],"id":20,"tier":2,"diff":"xhard","tags":["gate","extra-hard"]},{"id":21,"tier":3,"width":5,"height":5,"voidMask":[true,true,false,true,true,true,true,false,true,true,false,false,false,false,false,true,true,false,true,true,true,true,false,true,true],"threads":[[10,11,13,14],[2,7,17,22]],"walls":[],"weaveCells":[12],"tags":["weave"]},{"id":22,"tier":3,"width":5,"height":5,"voidMask":[true,true,false,true,true,true,true,false,true,true,false,false,false,false,false,true,true,false,true,true,true,true,false,true,true],"threads":[[10,11,13,14],[2,7,17,22]],"walls":[],"overlapNodes":[{"cell":12,"threadA":0,"threadB":1}],"tags":["overlap"]},{"id":23,"tier":3,"width":7,"height":7,"voidMask":[true,true,true,false,true,true,true,true,true,true,false,true,true,true,true,true,true,false,true,true,true,false,false,false,false,false,false,false,true,true,true,false,true,true,true,true,true,true,false,true,true,true,true,true,true,false,true,true,true],"threads":[[21,22,23,25,26,27],[3,10,17,31,38,45]],"walls":[],"weaveCells":[24],"tags":["weave"]},{"id":24,"tier":3,"width":7,"height":7,"voidMask":[true,true,true,false,true,true,true,true,true,true,false,true,true,true,true,true,true,false,true,true,true,false,false,false,false,false,false,false,true,true,true,false,true,true,true,true,true,true,false,true,true,true,true,true,true,false,true,true,true],"threads":[[21,22,23,25,26,27],[3,10,17,31,38,45]],"walls":[],"overlapNodes":[{"cell":24,"threadA":0,"threadB":1}],"tags":["overlap"]},{"id":25,"tier":3,"width":5,"height":5,"voidMask":[true,true,false,true,true,true,true,false,true,true,false,false,false,false,false,true,true,false,true,true,true,true,false,true,true],"threads":[[10,11,13,14],[2,7,17,22]],"walls":[],"weaveCells":[12],"tags":["weave","gate"],"gates":[{"id":"g25","from":10,"to":11,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":26,"tier":3,"width":5,"height":5,"voidMask":[true,true,false,true,true,true,true,false,true,true,false,false,false,false,false,true,true,false,true,true,true,true,false,true,true],"threads":[[10,11,13,14],[2,7,17,22]],"walls":[],"overlapNodes":[{"cell":12,"threadA":0,"threadB":1}],"tags":["overlap","gate"],"gates":[{"id":"g26","from":10,"to":11,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":27,"tier":3,"width":7,"height":5,"voidMask":[true,true,true,false,true,true,true,true,true,true,false,true,true,true,false,false,false,false,false,false,false,true,true,true,false,true,true,true,true,true,true,false,true,true,true],"threads":[[14,15,16,18,19,20],[3,10,24,31]],"walls":[],"weaveCells":[17],"tags":["weave"]},{"id":28,"tier":3,"width":5,"height":7,"voidMask":[true,true,false,true,true,true,true,false,true,true,true,true,false,true,true,false,false,false,false,false,true,true,false,true,true,true,true,false,true,true,true,true,false,true,true],"threads":[[15,16,18,19],[2,7,12,22,27,32]],"walls":[],"overlapNodes":[{"cell":17,"threadA":0,"threadB":1}],"tags":["overlap"]},{"id":29,"tier":3,"width":7,"height":7,"voidMask":[true,false,true,true,true,false,true,true,false,true,true,true,false,true,true,false,true,true,true,false,true,false,false,false,false,false,false,false,true,false,true,true,true,false,true,true,false,true,true,true,false,true,true,false,true,true,true,false,true],"threads":[[21,23,24,25,27],[1,8,15,29,36,43],[5,12,19,33,40,47]],"walls":[],"tags":["weave"],"weaveCells":[22,26]},{"id":30,"tier":3,"width":7,"height":7,"voidMask":[true,false,true,false,true,false,true,true,false,true,false,true,false,true,true,false,true,false,true,false,true,false,false,false,false,false,false,false,true,false,true,false,true,false,true,true,false,true,false,true,false,true,true,false,true,false,true,false,true],"threads":[[21,23,25,27],[1,8,15,29,36,43],[3,10,17,31,38,45],[5,12,19,33,40,47]],"walls":[],"tags":["weave","xhard"],"weaveCells":[22,24,26]},{"width":4,"height":4,"threads":[[1,8,14,11],[7,6,9,5]],"walls":[],"gates":[{"id":"g31","from":8,"to":12,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"},{"id":"g31b","from":14,"to":15,"openTriggers":[{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}],"id":31,"tier":4,"tags":["switch"]},{"width":5,"height":5,"threads":[[0,3,14,23,20],[15,6,13,16,12]],"walls":[],"gates":[{"id":"g32","from":9,"to":14,"openTriggers":[{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"},{"id":"g32b","from":23,"to":22,"openTriggers":[{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"}],"id":32,"tier":4,"tags":["switch"]},{"width":5,"height":4,"threads":[[0,3,14,18],[17,10,5],[6,13,7]],"walls":[],"gates":[{"id":"g33","from":9,"to":14,"openTriggers":[{"threadIndex":1,"checkpointIndex":2},{"threadIndex":2,"checkpointIndex":2}],"openOp":"AllOf"}],"id":33,"tier":4,"tags":["logic-and"]},{"width":5,"height":5,"threads":[[6,1,4,19],[24,21,10,16],[17,8,12]],"walls":[],"gates":[{"id":"g34","from":3,"to":4,"openTriggers":[{"threadIndex":1,"checkpointIndex":3},{"threadIndex":2,"checkpointIndex":2}],"openOp":"AllOf"}],"id":34,"tier":4,"tags":["logic-and"]},{"width":5,"height":4,"threads":[[9,2,5,10],[15,18,13,7],[6,12]],"walls":[],"gates":[{"id":"g35","from":1,"to":0,"openTriggers":[{"threadIndex":1,"checkpointIndex":3},{"threadIndex":2,"checkpointIndex":1}],"openOp":"AnyOf"}],"id":35,"tier":4,"tags":["logic-or"]},{"id":36,"tier":4,"tags":["logic-or","shaped"],"width":6,"height":5,"threads":[[18,7,3],[4,17,22],[16,8,19,20,28]],"walls":[],"voidMask":[true,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true],"gates":[{"id":"g","from":19,"to":25,"openTriggers":[{"threadIndex":0,"checkpointIndex":2},{"threadIndex":1,"checkpointIndex":2}],"openOp":"AnyOf"}]},{"width":5,"height":4,"threads":[[18,9,2,5],[10,17,6,13]],"walls":[],"gates":[{"id":"g37","from":3,"to":2,"openTriggers":[{"threadIndex":1,"checkpointIndex":1}],"openOp":"AllOf","closeTriggers":[{"threadIndex":1,"checkpointIndex":2}],"closeOp":"AllOf"}],"id":37,"tier":4,"tags":["toggling"]},{"width":5,"height":5,"threads":[[8,3,0,15,22,24],[19,13,18,11,6,12]],"walls":[],"gates":[{"id":"g38","from":10,"to":15,"openTriggers":[{"threadIndex":1,"checkpointIndex":1}],"openOp":"AllOf","closeTriggers":[{"threadIndex":1,"checkpointIndex":2}],"closeOp":"AllOf"}],"id":38,"tier":4,"tags":["toggling"]},{"id":39,"tier":4,"tags":["logic-and","shaped","hard"],"width":6,"height":6,"threads":[[12,1,4,17],[23,34,31,24],[18,14,8,15,21,27]],"walls":[],"voidMask":[true,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true],"gates":[{"id":"g","from":15,"to":16,"openTriggers":[{"threadIndex":0,"checkpointIndex":3},{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}],"diff":"hard"},{"width":6,"height":6,"threads":[[26,35,11,2,6],[12,31,7,9,16,27,21,20]],"walls":[],"gates":[{"id":"g40","from":11,"to":5,"openTriggers":[{"threadIndex":1,"checkpointIndex":1}],"openOp":"AllOf","closeTriggers":[{"threadIndex":1,"checkpointIndex":2}],"closeOp":"AllOf"}],"id":40,"tier":4,"tags":["toggling","extra-hard"],"diff":"xhard"},{"width":5,"height":4,"threads":[[17,14,4],[3,0,15,16],[11,8,12]],"walls":[],"id":41,"tier":5,"tags":["3thread"]},{"width":6,"height":4,"threads":[[19,6,1],[2,5,23,21],[20,7,10,15]],"walls":[],"id":42,"tier":5,"tags":["3thread"]},{"id":43,"tier":5,"tags":["3thread","weave"],"width":7,"height":5,"voidMask":[true,false,true,true,false,true,true,true,false,true,true,false,true,true,false,false,false,false,false,false,false,true,false,true,true,false,true,true,true,false,true,true,false,true,true],"threads":[[14,16,17,19,20],[1,8,22,29],[4,11,25,32]],"walls":[],"weaveCells":[15,18]},{"width":5,"height":5,"threads":[[0,3,14],[19,22,15,10],[5,8,13],[18,11,12]],"walls":[],"id":44,"tier":5,"tags":["4thread"]},{"width":6,"height":5,"threads":[[1,12,24],[25,28,23],[17,4,8],[7,20,9,22,21]],"walls":[],"id":45,"tier":5,"tags":["4thread"]},{"id":46,"tier":5,"tags":["4thread","overlap"],"width":7,"height":7,"voidMask":[true,false,true,false,true,false,true,true,false,true,false,true,false,true,true,false,true,false,true,false,true,false,false,false,false,false,false,false,true,false,true,false,true,false,true,true,false,true,false,true,false,true,true,false,true,false,true,false,true],"threads":[[21,23,25,27],[1,8,15,29,36,43],[3,10,17,31,38,45],[5,12,19,33,40,47]],"walls":[],"overlapNodes":[{"cell":22,"threadA":0,"threadB":1},{"cell":24,"threadA":0,"threadB":2},{"cell":26,"threadA":0,"threadB":3}]},{"id":47,"tier":5,"tags":["3thread","logic-and"],"width":6,"height":5,"threads":[[23,27,24,18],[12,1,4,17],[16,8,19,15,22]],"walls":[],"gates":[{"id":"g","from":19,"to":20,"openTriggers":[{"threadIndex":0,"checkpointIndex":3},{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":48,"tier":5,"tags":["4thread","shaped"],"width":6,"height":6,"threads":[[20,24,32,26],[27,28,17],[11,3,7],[6,14,8,15,16]],"walls":[],"voidMask":[true,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true]},{"id":49,"tier":5,"diff":"hard","tags":["4thread","logic-and","shaped","hard"],"width":7,"height":6,"threads":[[15,8,3],[4,13,34,33],[40,37,28,22],[23,32,17,10,19,26]],"walls":[],"voidMask":[true,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,true],"gates":[{"id":"g","from":16,"to":9,"openTriggers":[{"threadIndex":0,"checkpointIndex":2},{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"id":50,"tier":5,"diff":"xhard","tags":["4thread","logic-and","shaped","extra-hard"],"width":7,"height":6,"threads":[[3,8,21,28],[29,38,33,20,13],[12,11,16,15,23],[30,25,18,26]],"walls":[],"voidMask":[true,false,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,false,true],"gates":[{"id":"g","from":24,"to":17,"openTriggers":[{"threadIndex":0,"checkpointIndex":3},{"threadIndex":1,"checkpointIndex":4}],"openOp":"AllOf"}]},{"width":5,"height":5,"blendNode":18,"threadColors":["#E3A81C","#4E9A4A","#2F74C0"],"threads":[[4,19,18],[8,7,0,11,18],[18,21,15,20]],"walls":[],"id":51,"tier":6,"tags":["blend","2feeder"],"hint":"Fill both leads into the node — it turns to the merged colour, then draw that thread to its finish."},{"width":6,"height":5,"blendNode":7,"threadColors":["#E3A81C","#4E9A4A","#2F74C0"],"threads":[[26,22,23,15,19,18,7],[1,7],[7,3,9,4,11]],"walls":[],"id":52,"tier":6,"tags":["blend","2feeder"]},{"width":6,"height":6,"blendNode":13,"threadColors":["#E3A81C","#4E9A4A","#2F74C0"],"threads":[[11,10,2,7,1,12,13],[32,28,29,21,25,24,13],[13,16,17]],"walls":[],"id":53,"tier":6,"tags":["blend","2feeder"]},{"id":54,"tier":6,"tags":["blend","2feeder","shaped"],"width":6,"height":5,"blendNode":19,"threadColors":["#E3A81C","#4E9A4A","#2F74C0"],"threads":[[6,19],[7,8,4,17,14,19],[19,20,28,23]],"walls":[],"voidMask":[true,false,false,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true,false,false,false,false,true]},{"width":5,"height":5,"blendNode":7,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[10,15,22,23,14,7],[3,8,7],[0,7],[7,5]],"walls":[],"id":55,"tier":6,"tags":["blend","3feeder"],"hint":"Three leads now feed the node."},{"width":6,"height":6,"blendNode":20,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[27,35,22,16,5,9,20],[25,31,20],[7,12,6,2,20],[20,18]],"walls":[],"id":56,"tier":6,"tags":["blend","3feeder"]},{"id":57,"tier":6,"tags":["blend","3feeder","logic-and"],"width":6,"height":6,"blendNode":14,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[31,25,12,1,14],[11,10,2,14],[33,27,35,22,14],[14,17]],"walls":[],"gates":[{"id":"g","from":16,"to":17,"openTriggers":[{"threadIndex":0,"checkpointIndex":4},{"threadIndex":1,"checkpointIndex":3}],"openOp":"AllOf"}]},{"width":7,"height":6,"blendNode":24,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[16,9,0,21,28,37,24],[10,11,6,19,24],[27,34,39,24],[24,38]],"walls":[],"id":58,"tier":6,"tags":["blend","3feeder"]},{"width":7,"height":7,"blendNode":25,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[8,0,14,16,4,6,19,18,25],[45,31,43,21,25],[34,48,39,32,25],[25,27]],"walls":[],"id":59,"tier":6,"diff":"hard","tags":["blend","3feeder","hard"]},{"width":7,"height":7,"blendNode":32,"threadColors":["#E3A81C","#4E9A4A","#C0562F","#2F74C0"],"threads":[[6,5,20,19,34,40,32],[42,28,14,0,10,24,44,38,32],[4,32],[32,46]],"walls":[],"id":60,"tier":6,"diff":"xhard","tags":["blend","3feeder","extra-hard"]}];
+
+const THREAD_COLOR = ['#C77A21', '#0E7C86', '#7A5CC7', '#4C8C4A'];
+const THREAD_GLYPH = ['circle', 'square', 'diamond', 'triangle'];
+const THREAD_DASH = [null, '10 4', '2 4', '6 2 1 2'];
+const INK = '#3A332A';
+const GRID_LINE = '#D8CDB4';
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let levelIndex = 0;
+let engine, mapper;
+let activeThread = null;
+let lastHeadCells = {};
+let progress = JSON.parse(localStorage.getItem('woven_progress') || '{}'); // {levelId: {done, rating}}
+
+function currentLevelDef() { return LEVELS[levelIndex]; }
+
+function saveProgress() { localStorage.setItem('woven_progress', JSON.stringify(progress)); }
+
+// ============================================================
+// FTUE — teach each mechanic the FIRST time it appears, once. Tracked in
+// localStorage so a returning player is never re-taught. The generic "drag to
+// draw" line is simply the first FTUE step, not a persistent overlay — after a
+// mechanic is taught, its board shows no hint.
+// ============================================================
+let seenFtue = new Set(JSON.parse(localStorage.getItem('woven_ftue') || '[]'));
+function markFtueSeen(k) { if (!seenFtue.has(k)) { seenFtue.add(k); localStorage.setItem('woven_ftue', JSON.stringify([...seenFtue])); } }
+const FTUE = [
+  { k: 'draw', msg: 'Drag from a shape to draw its thread. Fill every cell — the threads can never cross.', test: () => true },
+  { k: 'gate', msg: 'A gate stays shut until the matching-colour thread reaches the number on it. Draw that thread first.', test: (d) => (d.gates || []).some((g) => g.openTriggers.length === 1 && !(g.closeTriggers && g.closeTriggers.length)) },
+  { k: 'weave', msg: 'The bridge cell is shared — one thread crosses over, the other passes under. They weave, never touching.', test: (d) => (d.weaveCells || []).length > 0 },
+  { k: 'overlap', msg: 'This node is shared — both threads may pass through it.', test: (d) => (d.overlapNodes || []).length > 0 },
+  { k: 'switch', msg: 'One checkpoint opens two gates at once.', test: (d) => (d.tags || []).includes('switch') },
+  { k: 'and', msg: 'A “+” gate needs BOTH of the other threads to reach their checkpoints.', test: (d) => (d.gates || []).some((g) => g.openTriggers.length > 1 && g.openOp === 'AllOf') },
+  { k: 'or', msg: 'A “/” gate opens when EITHER thread reaches its checkpoint.', test: (d) => (d.gates || []).some((g) => g.openTriggers.length > 1 && g.openOp === 'AnyOf') },
+  { k: 'toggle', msg: 'This gate opens, then shuts again — slip through while it is open.', test: (d) => (d.gates || []).some((g) => g.closeTriggers && g.closeTriggers.length) },
+  { k: 'multi', msg: 'More than two threads now — every colour must fill its own region.', test: (d) => d.blendNode === undefined && d.threads.length >= 3 },
+  { k: 'four', msg: 'Four threads share the board now.', test: (d) => d.blendNode === undefined && d.threads.length >= 4 },
+  { k: 'blend', msg: 'Two leads feed the node. Once both arrive it turns the merged colour — then draw that thread to its finish.', test: (d) => d.blendNode !== undefined },
+  { k: 'blend3', msg: 'Now three leads must all reach the node before the merged thread appears.', test: (d) => d.blendNode !== undefined && d.threads.length >= 4 },
+];
+function ftueFor(def) { for (const f of FTUE) { if (f.test(def) && !seenFtue.has(f.k)) return f; } return null; }
+
+function buildLevel() {
+  const def = currentLevelDef();
+  engine = buildEngine(def);
+  sfxArmed = false; // don't fire state-change sounds during level load
+  hintCell = null; if (typeof hintTimer !== 'undefined' && hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+  activeThread = null;
+  lastHeadCells = {};
+  const gridDim = Math.max(def.width, def.height);
+  const MAX_BOARD = 336, MAX_CELL = 58, MIN_CELL = 26;
+  const cell = Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(MAX_BOARD / gridDim)));
+  mapper = { cell, width: def.width, height: def.height, originOffset: cell * 0.5 };
+  render();
+  document.getElementById('feedbackStrip').classList.remove('visible');
+  document.querySelectorAll('.fb-btn').forEach((b) => b.classList.remove('selected'));
+  sfxArmed = true;
+}
+
+function cellCenter(i) {
+  const [r, c] = rowCol(i, mapper.width);
+  return [c * mapper.cell + mapper.originOffset, r * mapper.cell + mapper.originOffset];
+}
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+const svg = document.getElementById('boardShadow');
+
+function render() {
+  const def = currentLevelDef();
+  const boardW = def.width * mapper.cell, boardH = def.height * mapper.cell;
+  svg.setAttribute('viewBox', `0 0 ${boardW} ${boardH}`);
+  svg.setAttribute('width', boardW);
+  svg.setAttribute('height', boardH);
+  svg.innerHTML = '';
+
+  const untouched = engine.threads.every((t) => t.path.length === 1);
+  const COL = def.threadColors || THREAD_COLOR; // per-level palette override (Blend uses yellow/green/blue)
+
+  const isVoid = (i) => engine.elements.elementAt(i) === ElementKind.VOID;
+  const hasVoids = (def.voidMask || []).some(Boolean);
+
+  if (!hasVoids) {
+    // Full rectangular board: one rounded panel + full grid.
+    svg.appendChild(svgEl('rect', { x: 0, y: 0, width: boardW, height: boardH, fill: '#FBF7EF', rx: 14 }));
+    svg.appendChild(svgEl('rect', { x: 1, y: 1, width: boardW - 2, height: boardH - 2, rx: 13, fill: 'none', stroke: '#EADFC9', 'stroke-width': 1.5 }));
+    const gridGroup = svgEl('g', { opacity: 0.55 });
+    for (let c = 1; c < def.width; c++) gridGroup.appendChild(svgEl('line', { x1: c * mapper.cell, y1: 4, x2: c * mapper.cell, y2: boardH - 4, stroke: GRID_LINE, 'stroke-width': 1.2 }));
+    for (let r = 1; r < def.height; r++) gridGroup.appendChild(svgEl('line', { x1: 4, y1: r * mapper.cell, x2: boardW - 4, y2: r * mapper.cell, stroke: GRID_LINE, 'stroke-width': 1.2 }));
+    svg.appendChild(gridGroup);
+  } else {
+    // Custom shape: paint only playable cells, so void cells are truly absent
+    // (the page shows through and the board's drop-shadow hugs the real shape).
+    const R = 8; // rounded radius on corners exposed to the outside
+    for (let r = 0; r < def.height; r++) {
+      for (let c = 0; c < def.width; c++) {
+        const i = cidx(r, c, def.width);
+        if (isVoid(i)) continue;
+        const x = c * mapper.cell, y = r * mapper.cell, s = mapper.cell;
+        const up = r > 0 && !isVoid(i - def.width);
+        const dn = r < def.height - 1 && !isVoid(i + def.width);
+        const lf = c > 0 && !isVoid(i - 1);
+        const rt = c < def.width - 1 && !isVoid(i + 1);
+        // Round a corner only where both of its edges are exposed (an outside corner).
+        const tl = (!up && !lf) ? R : 0, tr = (!up && !rt) ? R : 0;
+        const br = (!dn && !rt) ? R : 0, bl = (!dn && !lf) ? R : 0;
+        const d = `M${x + tl},${y}` +
+          `H${x + s - tr}` + (tr ? `a${tr},${tr} 0 0 1 ${tr},${tr}` : '') +
+          `V${y + s - br}` + (br ? `a${br},${br} 0 0 1 ${-br},${br}` : '') +
+          `H${x + bl}` + (bl ? `a${bl},${bl} 0 0 1 ${-bl},${-bl}` : '') +
+          `V${y + tl}` + (tl ? `a${tl},${tl} 0 0 1 ${tl},${-tl}` : '') + 'Z';
+        svg.appendChild(svgEl('path', { d, fill: '#FBF7EF' }));
+      }
+    }
+    // Interior grid lines (only between two playable cells) + outline on exposed edges.
+    const gridGroup = svgEl('g', {});
+    for (let r = 0; r < def.height; r++) {
+      for (let c = 0; c < def.width; c++) {
+        const i = cidx(r, c, def.width);
+        if (isVoid(i)) continue;
+        const x0 = c * mapper.cell, y0 = r * mapper.cell, x1 = x0 + mapper.cell, y1 = y0 + mapper.cell;
+        const rtVoid = c === def.width - 1 || isVoid(i + 1);
+        const dnVoid = r === def.height - 1 || isVoid(i + def.width);
+        const upVoid = r === 0 || isVoid(i - def.width);
+        const lfVoid = c === 0 || isVoid(i - 1);
+        if (!rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0 + 2, x2: x1, y2: y1 - 2, stroke: GRID_LINE, 'stroke-width': 1.2, opacity: 0.55 }));
+        if (!dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0 + 2, y1, x2: x1 - 2, y2: y1, stroke: GRID_LINE, 'stroke-width': 1.2, opacity: 0.55 }));
+        if (upVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x1, y2: y0, stroke: '#EADFC9', 'stroke-width': 1.5 }));
+        if (rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
+        if (dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
+        if (lfVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x0, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
+      }
+    }
+    svg.appendChild(gridGroup);
+  }
+
+  // Walls (drawn as thick dark bars on the edge)
+  const n = def.width * def.height;
+  for (let i = 0; i < n; i++) {
+    const [r, c] = rowCol(i, def.width);
+    if (c < def.width - 1 && engine.elements.hasWall(i, i + 1)) {
+      const x = (c + 1) * mapper.cell;
+      svg.appendChild(svgEl('line', { x1: x, y1: r * mapper.cell + 3, x2: x, y2: (r + 1) * mapper.cell - 3, stroke: INK, 'stroke-width': 3, 'stroke-linecap': 'round', opacity: 0.65 }));
+    }
+    if (r < def.height - 1 && engine.elements.hasWall(i, i + def.width)) {
+      const y = (r + 1) * mapper.cell;
+      svg.appendChild(svgEl('line', { x1: c * mapper.cell + 3, y1: y, x2: (c + 1) * mapper.cell - 3, y2: y, stroke: INK, 'stroke-width': 3, 'stroke-linecap': 'round', opacity: 0.65 }));
+    }
+  }
+
+  // One-way arrows
+  for (const ow of def.oneWay || []) {
+    const [x, y] = cellCenter(ow.cell);
+    const dirs = [];
+    if (ow.mask & 1) dirs.push([0, -1]);
+    if (ow.mask & 2) dirs.push([0, 1]);
+    if (ow.mask & 4) dirs.push([1, 0]);
+    if (ow.mask & 8) dirs.push([-1, 0]);
+    for (const [dx, dy] of dirs) {
+      const r = mapper.cell * 0.3;
+      svg.appendChild(svgEl('polygon', {
+        points: `${x + dx * r},${y + dy * r} ${x - dy * r * 0.4},${y - dx * r * 0.4} ${x + dy * r * 0.4},${y + dx * r * 0.4}`,
+        fill: INK, opacity: 0.4,
+      }));
+    }
+  }
+
+  // Weave cells — a "bridge / overpass": a solid deck crossing OVER, and the
+  // other line passing UNDER (drawn with a gap). Reads as "they cross, never touch".
+  for (const wc of def.weaveCells || []) {
+    const [x, y] = cellCenter(wc);
+    const s = mapper.cell * 0.34;
+    svg.appendChild(svgEl('rect', { x: x - s - 2, y: y - s - 2, width: (s + 2) * 2, height: (s + 2) * 2, rx: 7, fill: 'rgba(14,124,134,0.10)' }));
+    svg.appendChild(svgEl('line', { x1: x - s, y1: y, x2: x + s, y2: y, stroke: INK, 'stroke-width': 2.6, 'stroke-linecap': 'round', opacity: 0.5 })); // deck (over)
+    svg.appendChild(svgEl('line', { x1: x, y1: y - s, x2: x, y2: y - s * 0.36, stroke: INK, 'stroke-width': 2.6, 'stroke-linecap': 'round', opacity: 0.5 })); // under, top half
+    svg.appendChild(svgEl('line', { x1: x, y1: y + s * 0.36, x2: x, y2: y + s, stroke: INK, 'stroke-width': 2.6, 'stroke-linecap': 'round', opacity: 0.5 })); // under, bottom half
+  }
+  // Overlap nodes — a distinct "hub": ring + centre dot (both threads may use it).
+  for (const ov of def.overlapNodes || []) {
+    const [x, y] = cellCenter(ov.cell);
+    const s = mapper.cell * 0.34;
+    svg.appendChild(svgEl('rect', { x: x - s - 2, y: y - s - 2, width: (s + 2) * 2, height: (s + 2) * 2, rx: 7, fill: 'rgba(58,51,42,0.07)' }));
+    svg.appendChild(svgEl('circle', { cx: x, cy: y, r: s * 0.8, fill: 'none', stroke: INK, 'stroke-width': 2.4, opacity: 0.45 }));
+    svg.appendChild(svgEl('circle', { cx: x, cy: y, r: s * 0.3, fill: INK, opacity: 0.4 }));
+  }
+
+  // Gates — coloured by the thread whose checkpoint opens them, stamped with
+  // that checkpoint's number, so the cause reads at a glance ("teal ② opens
+  // this"). Open gates fade to a checkmark. AND/OR triggers show n+n / n/n.
+  for (const g of def.gates || []) {
+    const [fx, fy] = cellCenter(g.from), [tx, ty] = cellCenter(g.to);
+    const mx = (fx + tx) / 2, my = (fy + ty) / 2;
+    const [fr] = rowCol(g.from, def.width), [tr] = rowCol(g.to, def.width);
+    const sameRow = fr === tr;
+    const gw = sameRow ? 7 : mapper.cell * 0.82, gh = sameRow ? mapper.cell * 0.82 : 7;
+    const open = engine.gateState.isOpen(g.id);
+    const trig = g.openTriggers[0];
+    const col = COL[trig.threadIndex] || '#9c4a45';
+    svg.appendChild(svgEl('rect', {
+      x: mx - gw / 2, y: my - gh / 2, width: gw, height: gh, rx: 3, class: 'gate-bar',
+      fill: col, opacity: open ? 0.22 : 0.95,
+    }));
+    const br = Math.max(8, mapper.cell * 0.18);
+    const badge = svgEl('g', { opacity: open ? 0.32 : 1 });
+    badge.appendChild(svgEl('circle', { cx: mx, cy: my, r: br, fill: col, stroke: '#FDFAF3', 'stroke-width': 1.5 }));
+    const label = g.openTriggers.map((t) => t.checkpointIndex + 1).join(g.openOp === 'AnyOf' ? '/' : '+');
+    badge.appendChild(svgEl('text', { x: mx, y: my + br * 0.36, 'text-anchor': 'middle', 'font-size': br * 1.15, 'font-weight': 700, 'font-family': "'Nunito Sans', sans-serif", fill: '#FDFAF3' })).textContent = open ? '✓' : label;
+    svg.appendChild(badge);
+  }
+
+  // Threads
+  for (let ti = 0; ti < engine.threads.length; ti++) {
+    const path = engine.threads[ti].path;
+    const pts = path.map(cellCenter).map((p) => p.join(',')).join(' ');
+    const attrs = { points: pts, fill: 'none', class: 'thread-path', stroke: COL[ti], 'stroke-width': mapper.cell * 0.26, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+    if (THREAD_DASH[ti]) attrs['stroke-dasharray'] = THREAD_DASH[ti].split(' ').map((v) => Number(v) * mapper.cell / 68).join(' ');
+    svg.appendChild(svgEl('polyline', attrs));
+  }
+
+  // Checkpoint glyphs (colour + shape + number)
+  for (let ti = 0; ti < engine.threads.length; ti++) {
+    const thread = engine.threads[ti];
+    thread.checkpoints.forEach((cp, i) => {
+      if (cp === def.blendNode) return; // shown as the blend marker instead of a numbered glyph
+      const [x, y] = cellCenter(cp);
+      const isNext = i === thread.progress;
+      const isPassed = i < thread.progress;
+      const size = isNext ? mapper.cell * 0.24 : mapper.cell * 0.2;
+      const opacity = isPassed ? 0.35 : (isNext ? 0.95 : 0.55);
+      if (isNext) svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size + 4, fill: COL[ti], opacity: 0.18 }));
+      const glyph = THREAD_GLYPH[ti];
+      if (glyph === 'circle') svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size, fill: COL[ti], opacity }));
+      else if (glyph === 'square') svg.appendChild(svgEl('rect', { x: x - size, y: y - size, width: size * 2, height: size * 2, rx: 4, fill: COL[ti], opacity }));
+      else if (glyph === 'diamond') svg.appendChild(svgEl('polygon', { points: `${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}`, fill: COL[ti], opacity }));
+      else svg.appendChild(svgEl('polygon', { points: `${x},${y - size} ${x + size},${y + size} ${x - size},${y + size}`, fill: COL[ti], opacity }));
+      const label = i + 1; // the shared blend node is "1"; the merged thread continues 2,3,4…
+      svg.appendChild(svgEl('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': Math.max(10, mapper.cell * 0.17), 'font-weight': 700, 'font-family': "'Nunito Sans', sans-serif", fill: '#FDFAF3', opacity: isPassed ? 0.75 : 1 })).textContent = String(label);
+    });
+  }
+
+  // Blend knot — shows the feeder colours as pie sectors (one per feeder) so you
+  // can see which threads combine here. Once ALL feeders arrive it turns the
+  // merged colour, and the merged thread is drawn from it (numbering its own 1..k).
+  if (def.blendNode !== undefined && def.blendNode !== null && engine.blendThread !== null && engine.feeders.length >= 2) {
+    const [x, y] = cellCenter(def.blendNode);
+    const R = mapper.cell * 0.28;
+    const merged = COL[engine.blendThread];
+    const ready = engine._feedersComplete();
+    if (ready) {
+      svg.appendChild(svgEl('circle', { cx: x, cy: y, r: R + 4, fill: merged, opacity: 0.16 }));
+      svg.appendChild(svgEl('circle', { cx: x, cy: y, r: R, fill: merged }));
+      svg.appendChild(svgEl('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': Math.max(10, mapper.cell * 0.17), 'font-weight': 700, 'font-family': "'Nunito Sans', sans-serif", fill: '#FDFAF3' })).textContent = '1';
+      if (!engine.isSolved() && engine.threads[engine.blendThread].head === def.blendNode)
+        svg.appendChild(svgEl('circle', { cx: x, cy: y, r: R + 4, fill: 'none', stroke: merged, 'stroke-width': 2, class: 'invite-ring' }));
+    } else {
+      const n = engine.feeders.length;
+      for (let k = 0; k < n; k++) {
+        const a0 = -Math.PI / 2 + (k * 2 * Math.PI) / n, a1 = -Math.PI / 2 + ((k + 1) * 2 * Math.PI) / n;
+        const x0 = x + R * Math.cos(a0), y0 = y + R * Math.sin(a0), x1 = x + R * Math.cos(a1), y1 = y + R * Math.sin(a1);
+        const large = (a1 - a0) > Math.PI ? 1 : 0;
+        svg.appendChild(svgEl('path', { d: `M${x},${y} L${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} Z`, fill: COL[engine.feeders[k]], opacity: 0.92 }));
+      }
+      svg.appendChild(svgEl('circle', { cx: x, cy: y, r: R, fill: 'none', stroke: '#FDFAF3', 'stroke-width': 1.4, opacity: 0.6 }));
+    }
+  }
+
+  // Heads
+  for (let ti = 0; ti < engine.threads.length; ti++) {
+    const h = engine.threads[ti].head;
+    if (def.blendNode !== undefined && ti === engine.blendThread && h === def.blendNode) continue; // covered by blend marker
+    const [x, y] = cellCenter(h);
+    const justMoved = lastHeadCells[ti] !== undefined && lastHeadCells[ti] !== h;
+    const group = svgEl('g', { id: 'head-' + ti, class: 'head-marker' + (justMoved ? ' pulse' : '') });
+    if (untouched && engine.threads[ti].path.length === 1) {
+      group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.3, fill: 'none', stroke: COL[ti], 'stroke-width': 2, class: 'invite-ring' }));
+    }
+    group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.15, fill: COL[ti] }));
+    group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.05, fill: '#ffffff' }));
+    svg.appendChild(group);
+    lastHeadCells[ti] = h;
+  }
+
+  const tierNames = ['', 'Core', 'Gates', 'Weave & Overlap', 'Advanced Gates', 'Multi-Thread', 'Blend'];
+  document.getElementById('tierLabel').textContent = `Tier ${currentLevelDef().tier} — ${tierNames[currentLevelDef().tier]}`;
+  const _dl = currentLevelDef().diff;
+  document.getElementById('levelLabel').textContent = `Level ${currentLevelDef().id} of ${LEVELS.length}` + (_dl === 'hard' ? ' · Hard' : _dl === 'xhard' ? ' · Extra hard' : '');
+  document.getElementById('undoBtn').disabled = !canUndo();
+
+  const msg = document.getElementById('message');
+  const nextBtn = document.getElementById('nextBtn');
+  const fbStrip = document.getElementById('feedbackStrip');
+  if (engine.isSolved()) {
+    const isLast = levelIndex === LEVELS.length - 1;
+    msg.innerHTML = 'Solved!' + (isLast ? `<span class="sub">That's all ${LEVELS.length} — rate it, then send your feedback.</span>` : '<span class="sub">Rate the difficulty, then tap Next.</span>');
+    msg.className = 'solved visible';
+    nextBtn.innerHTML = isLast ? 'Send feedback<span class="btn-icon">→</span>' : 'Next<span class="btn-icon">→</span>';
+    nextBtn.style.display = 'inline-block';
+    fbStrip.classList.add('visible');
+    { const _lid = currentLevelDef().id; if (!progress[_lid] || !progress[_lid].done) { progress[_lid] = Object.assign({}, progress[_lid], { done: true }); coins += LEVEL_REWARD; saveProgress(); saveCoins(); updateCoins(); } }
+  } else if (engine.isDeadEnd()) {
+    msg.textContent = 'No moves left — Undo or Restart';
+    msg.className = 'deadend visible';
+    nextBtn.style.display = 'none';
+  } else if (untouched) {
+    // Only teach when this board introduces a mechanic the player hasn't met yet.
+    const f = ftueFor(def);
+    if (f) { msg.textContent = f.msg; msg.className = 'hint visible'; markFtueSeen(f.k); }
+    else { msg.className = ''; }
+    nextBtn.style.display = 'none';
+  } else {
+    msg.className = '';
+    nextBtn.style.display = 'none';
+  }
+
+  // Hint highlight — a pulsing target on the next correct cell (Zip-style reveal).
+  if (hintCell !== null) {
+    const [hx, hy] = cellCenter(hintCell);
+    svg.appendChild(svgEl('circle', { cx: hx, cy: hy, r: mapper.cell * 0.34, fill: 'none', stroke: '#C77A21', 'stroke-width': 3, 'stroke-dasharray': '4 4', class: 'invite-ring' }));
+  }
+
+  // Sound cues for state changes — only once a level is armed (never on load).
+  const curGates = new Set((def.gates || []).filter((g) => engine.gateState.isOpen(g.id)).map((g) => g.id));
+  const curBlend = engine.blendNode !== null && engine.feeders.length > 0 && engine._feedersComplete();
+  const curSolved = engine.isSolved();
+  if (sfxArmed) {
+    for (const id of curGates) if (!sfxPrev.gates.has(id)) SFX.gate();
+    if (curBlend && !sfxPrev.blend) SFX.blend();
+    if (curSolved && !sfxPrev.solved) SFX.solve();
+  }
+  sfxPrev = { gates: curGates, blend: curBlend, solved: curSolved };
+}
+
+function canUndo() {
+  if (activeThread === null) return false;
+  const floor = gestureFloor[activeThread] || 1;
+  return engine.threads[activeThread].path.length > floor;
+}
+
+function playLevelTransition() {
+  svg.classList.remove('entering');
+  void svg.getBBox();
+  svg.classList.add('entering');
+}
+
+function triggerShake(ti) {
+  const el = document.getElementById('head-' + ti);
+  if (!el) return;
+  el.classList.remove('shake');
+  void el.getBBox();
+  el.classList.add('shake');
+}
+
+// ============================================================
+// SOUND + HAPTICS — synthesized with Web Audio (no files; Artifact-CSP safe).
+// Haptics via navigator.vibrate (Android; iOS Safari has no Vibration API →
+// silently no-ops). One toggle mutes both; state persisted. Tones are soft and
+// warm (pentatonic) to match WOVEN's calm feel, not arcade beeps.
+// ============================================================
+let soundOn = (localStorage.getItem('woven_sound') ?? '1') === '1';
+let hapticsOn = (localStorage.getItem('woven_haptics') ?? '1') === '1';
+let audioCtx = null;
+function ensureAudio() {
+  if (!soundOn) return null;
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; } }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function tone(freq, dur, { type = 'sine', gain = 0.12, when = 0, attack = 0.006 } = {}) {
+  const ac = ensureAudio(); if (!ac) return;
+  const t = ac.currentTime + when;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function buzz(pattern) { if (hapticsOn && navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) {} } }
+const PENTA = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66];
+const SFX = {
+  step() { tone(300, 0.05, { gain: 0.05 }); },
+  retract() { tone(220, 0.05, { gain: 0.045 }); },
+  checkpoint(i) { tone(PENTA[Math.min(Math.max(i, 0), PENTA.length - 1)], 0.16, { type: 'triangle', gain: 0.12 }); buzz(12); },
+  error() { tone(150, 0.12, { gain: 0.09 }); buzz([18, 40, 18]); },
+  gate() { tone(392, 0.1, { type: 'triangle', gain: 0.1 }); tone(587.33, 0.16, { type: 'triangle', gain: 0.11, when: 0.08 }); buzz(20); },
+  blend() { [523.25, 659.25, 783.99].forEach((f, k) => tone(f, 0.32, { gain: 0.1, when: k * 0.02 })); buzz([15, 25, 15]); },
+  solve() { [523.25, 659.25, 783.99, 1046.5].forEach((f, k) => tone(f, 0.28, { type: 'triangle', gain: 0.12, when: k * 0.09 })); buzz([25, 40, 25, 40, 60]); },
+  ui() { tone(660, 0.04, { gain: 0.05 }); buzz(8); },
+};
+let sfxArmed = false;      // suppress transition sounds during level load
+let sfxPrev = { gates: new Set(), blend: false, solved: false };
+// ---- Coins + Hint (Zip-style: reveal the next correct cell of the solution) ----
+let coins = parseInt(localStorage.getItem('woven_coins') || '0', 10);
+const HINT_COST = 100, LEVEL_REWARD = 10;
+const solutionCache = {};
+function saveCoins() { localStorage.setItem('woven_coins', String(coins)); }
+function updateCoins() {
+  const c = document.getElementById('coinCount'); if (c) c.textContent = coins;
+  const h = document.getElementById('hintBtn'); if (h) h.disabled = coins < HINT_COST;
+}
+function solutionPaths(def) {
+  if (def.id in solutionCache) return solutionCache[def.id];
+  const E = buildEngine(def), K = E.threads.length;
+  const trig = new Set(); for (const g of def.gates || []) for (const t of g.openTriggers) trig.add(t.threadIndex);
+  const order = def.blendNode !== undefined ? [...Array(K).keys()] : [...Array(K).keys()].sort((a, b) => (trig.has(b) ? 1 : 0) - (trig.has(a) ? 1 : 0));
+  let sol = null;
+  (function route(oi) {
+    if (sol) return;
+    if (oi === order.length) { if (E.isSolved()) sol = E.threads.map((t) => t.path.slice()); return; }
+    const t = order[oi], th = E.threads[t];
+    (function ext() {
+      if (sol) return;
+      if (th.progress >= th.checkpoints.length) { route(oi + 1); return; }
+      for (const nb of E.grid.neighbors(th.head)) { if (sol) return; if (E.tryExtend(t, nb).ok) { ext(); E.tryRetract(t); } }
+    })();
+  })(0);
+  solutionCache[def.id] = sol;
+  return sol;
+}
+let hintCell = null, hintTimer = null;
+function flash(text) { const m = document.getElementById('message'); m.textContent = text; m.className = 'hint visible'; setTimeout(() => { if (m.textContent === text) m.className = ''; }, 2200); }
+function useHint() {
+  if (coins < HINT_COST) { flash('Not enough coins — you earn 10 per level'); return; }
+  const def = currentLevelDef(), sol = solutionPaths(def);
+  if (!sol) { flash('No hint available for this level'); return; }
+  const consider = []; if (activeThread !== null) consider.push(activeThread);
+  for (let ti = 0; ti < engine.threads.length; ti++) if (!consider.includes(ti)) consider.push(ti);
+  let target = null;
+  for (const ti of consider) {
+    const cur = engine.threads[ti].path, s = sol[ti];
+    if (s && cur.length < s.length && cur.every((c, i) => s[i] === c)) { target = s[cur.length]; break; }
+  }
+  if (target === null) { flash('A thread has strayed — Undo, then try a hint'); return; }
+  coins -= HINT_COST; saveCoins(); updateCoins();
+  hintCell = target; render();
+  if (hintTimer) clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hintCell = null; render(); }, 4500);
+}
+
+// ---- Options menu (sound, haptics, submit feedback, reset) ----
+function setToggleUI() {
+  const s = document.getElementById('soundToggle'), h = document.getElementById('hapticsToggle');
+  if (s) { s.textContent = soundOn ? 'On' : 'Off'; s.classList.toggle('on', soundOn); }
+  if (h) { h.textContent = hapticsOn ? 'On' : 'Off'; h.classList.toggle('on', hapticsOn); }
+}
+document.getElementById('optionsBtn').addEventListener('click', () => { setToggleUI(); document.getElementById('optionsOverlay').classList.add('visible'); });
+document.getElementById('closeOptionsBtn').addEventListener('click', () => document.getElementById('optionsOverlay').classList.remove('visible'));
+document.getElementById('soundToggle').addEventListener('click', () => { soundOn = !soundOn; localStorage.setItem('woven_sound', soundOn ? '1' : '0'); setToggleUI(); if (soundOn) { ensureAudio(); SFX.ui(); } });
+document.getElementById('hapticsToggle').addEventListener('click', () => { hapticsOn = !hapticsOn; localStorage.setItem('woven_haptics', hapticsOn ? '1' : '0'); setToggleUI(); buzz(25); });
+document.getElementById('optSubmitBtn').addEventListener('click', () => { document.getElementById('optionsOverlay').classList.remove('visible'); showSummary(); });
+document.getElementById('optResetBtn').addEventListener('click', () => {
+  if (!window.confirm('Reset all progress, coins and tutorial hints?')) return;
+  progress = {}; coins = 0; seenFtue = new Set();
+  localStorage.removeItem('woven_progress'); localStorage.removeItem('woven_coins'); localStorage.removeItem('woven_ftue');
+  saveCoins(); updateCoins(); levelIndex = 0; buildLevel(); playLevelTransition();
+  document.getElementById('optionsOverlay').classList.remove('visible');
+});
+document.getElementById('hintBtn').addEventListener('click', useHint);
+updateCoins();
+// a soft tick + light haptic on any button press (capture so audio resumes on the gesture)
+document.addEventListener('click', (e) => { if (e.target.closest('button')) { ensureAudio(); SFX.ui(); } }, true);
+
+// ============================================================
+// INPUT
+// ============================================================
+let gestureFloor = {};
+let isDown = false;
+
+function nearestCell(clientX, clientY) {
+  const rect = svg.getBoundingClientRect();
+  const def = currentLevelDef();
+  const boardW = def.width * mapper.cell, boardH = def.height * mapper.cell;
+  const scaleX = boardW / rect.width, scaleY = boardH / rect.height;
+  const x = (clientX - rect.left) * scaleX, y = (clientY - rect.top) * scaleY;
+  const c = Math.round((x - mapper.originOffset) / mapper.cell);
+  const r = Math.round((y - mapper.originOffset) / mapper.cell);
+  if (r < 0 || r >= def.height || c < 0 || c >= def.width) return null;
+  return cidx(r, c, def.width);
+}
+
+function stepToward(ti, target) {
+  const [tr, tc] = rowCol(target, mapper.width);
+  let guard = 0;
+  while (engine.threads[ti].head !== target && guard++ < 64) {
+    const [hr, hc] = rowCol(engine.threads[ti].head, mapper.width);
+    if (hr === tr && hc === tc) break;
+    const sameRow = hr === tr;
+    let next;
+    if (sameRow) next = cidx(hr, hc + (tc > hc ? 1 : -1), mapper.width);
+    else next = cidx(hr + (tr > hr ? 1 : -1), hc, mapper.width);
+    const beforeCp = engine.threads[ti].progress;
+    if (!engine.tryExtend(ti, next).ok) break;
+    if (engine.threads[ti].progress > beforeCp) SFX.checkpoint(engine.threads[ti].progress - 1); else SFX.step();
+  }
+  return engine.threads[ti].head === target;
+}
+
+function retractToward(ti, target) {
+  const floor = gestureFloor[ti] || 1;
+  let guard = 0;
+  while (engine.threads[ti].head !== target && guard++ < 64) {
+    if (engine.threads[ti].path.length <= floor) break;
+    if (!engine.tryRetract(ti).ok) break;
+    SFX.retract();
+  }
+}
+
+function handleDown(clientX, clientY) {
+  ensureAudio(); // resume the audio context on the user gesture
+  const m = document.getElementById('message'); if (m.classList.contains('hint')) m.className = ''; // an FTUE hint never sits in the way of a drag
+  const cell = nearestCell(clientX, clientY);
+  if (cell === null) return;
+  // Multiple threads can share a head cell (e.g. a blend node: both feeders end
+  // there AND the merged thread starts there). Pick the one that can actually
+  // act — prefer a thread that can extend, else one that can retract.
+  const cands = [];
+  for (let ti = 0; ti < engine.threads.length; ti++) if (engine.threads[ti].head === cell) cands.push(ti);
+  if (!cands.length) return;
+  let pick = cands.find((ti) => engine.grid.neighbors(cell).some((n) => engine.canExtend(ti, n)));
+  if (pick === undefined) pick = cands.find((ti) => engine.threads[ti].path.length > 1);
+  if (pick === undefined) pick = cands[0];
+  activeThread = pick;
+  gestureFloor[pick] = engine.threads[pick].path.length;
+  engine.beginGesture();
+  isDown = true;
+}
+
+function handleMove(clientX, clientY) {
+  if (!isDown || activeThread === null || engine.isSolved()) return;
+  const cell = nearestCell(clientX, clientY);
+  if (cell === null) return;
+  const ti = activeThread;
+  const h = engine.threads[ti].head;
+  if (cell === h) return;
+  const [hr, hc] = rowCol(h, mapper.width), [cr, cc] = rowCol(cell, mapper.width);
+  if (hr !== cr && hc !== cc) return;
+
+  const behindIndex = engine.threads[ti].path.indexOf(cell);
+  let rejected = false;
+  if (behindIndex !== -1 && behindIndex < engine.threads[ti].path.length - 1) {
+    retractToward(ti, cell);
+  } else if (!stepToward(ti, cell)) {
+    rejected = true;
+  }
+  render();
+  if (rejected) { triggerShake(ti); SFX.error(); }
+}
+
+svg.addEventListener('pointerdown', (e) => handleDown(e.clientX, e.clientY));
+svg.addEventListener('mousedown', (e) => handleDown(e.clientX, e.clientY));
+window.addEventListener('pointermove', (e) => handleMove(e.clientX, e.clientY));
+window.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
+window.addEventListener('pointerup', () => { isDown = false; });
+window.addEventListener('mouseup', () => { isDown = false; });
+
+document.getElementById('undoBtn').addEventListener('click', () => {
+  if (!canUndo()) return;
+  const floor = gestureFloor[activeThread] || 1;
+  while (engine.threads[activeThread].path.length > floor) {
+    if (!engine.tryRetract(activeThread).ok) break;
+  }
+  render();
+});
+
+document.getElementById('restartBtn').addEventListener('click', () => {
+  engine.restart();
+  activeThread = null;
+  lastHeadCells = {};
+  gestureFloor = {};
+  render();
+  playLevelTransition();
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  if (levelIndex === LEVELS.length - 1) { showSummary(); return; }
+  levelIndex = Math.min(levelIndex + 1, LEVELS.length - 1);
+  buildLevel();
+  playLevelTransition();
+});
+
+document.querySelectorAll('.fb-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.fb-btn').forEach((b) => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    progress[currentLevelDef().id] = { done: true, rating: btn.dataset.v };
+    saveProgress();
+  });
+});
+
+// ============================================================
+// LEVEL SELECT
+// ============================================================
+function openLevelSelect() {
+  const tierNames = ['', 'Core', 'Gates', 'Weave & Overlap', 'Advanced Gates', 'Multi-Thread', 'Blend'];
+  const container = document.getElementById('tierList');
+  container.innerHTML = '';
+  for (let tier = 1; tier <= 6; tier++) {
+    const block = document.createElement('div');
+    block.className = 'tier-block';
+    const title = document.createElement('div');
+    title.className = 'tier-title';
+    title.textContent = `Tier ${tier} — ${tierNames[tier]}`;
+    block.appendChild(title);
+    const grid = document.createElement('div');
+    grid.className = 'tier-grid';
+    LEVELS.filter((l) => l.tier === tier).forEach((l, idx) => {
+      const chip = document.createElement('button');
+      const globalIdx = LEVELS.indexOf(l);
+      const p = progress[l.id];
+      chip.className = 'level-chip' + (p && p.done ? ' done' : '') + (globalIdx === levelIndex ? ' current' : '');
+      chip.textContent = l.id;
+      if (l.diff) {
+        const s = document.createElement('span');
+        s.className = 'spike ' + l.diff;
+        s.textContent = l.diff === 'xhard' ? '★★' : '★';
+        chip.appendChild(s);
+      }
+      if (p && p.rating) {
+        const dot = document.createElement('span');
+        dot.className = 'diff-dot';
+        dot.style.background = p.rating === 'easy' ? 'var(--moss)' : p.rating === 'hard' ? 'var(--gate-closed)' : 'var(--amber)';
+        chip.appendChild(dot);
+      }
+      chip.addEventListener('click', () => {
+        levelIndex = globalIdx;
+        buildLevel();
+        playLevelTransition();
+        closeLevelSelect();
+      });
+      grid.appendChild(chip);
+    });
+    block.appendChild(grid);
+    container.appendChild(block);
+  }
+  document.getElementById('levelSelect').classList.add('visible');
+}
+function closeLevelSelect() { document.getElementById('levelSelect').classList.remove('visible'); }
+document.getElementById('wordmark').addEventListener('click', openLevelSelect);
+document.getElementById('levelSelectBtn').addEventListener('click', openLevelSelect);
+document.getElementById('closeSelectBtn').addEventListener('click', closeLevelSelect);
+document.getElementById('feedbackFromSelectBtn').addEventListener('click', () => { closeLevelSelect(); showSummary(); });
+
+// ============================================================
+// SESSION SUMMARY (no server — Artifact can't make outbound network calls;
+// the player copies this back through whatever channel they're using).
+// ============================================================
+function buildSummaryText() {
+  const lines = ['WOVEN playtest summary', ''];
+  let doneCount = 0;
+  for (const l of LEVELS) {
+    const p = progress[l.id];
+    if (p && p.done) {
+      doneCount++;
+      lines.push(`Level ${l.id} (Tier ${l.tier}, ${l.tags.join('/')})${p.rating ? ' — ' + p.rating : ''}`);
+    }
+  }
+  lines.splice(1, 0, `${doneCount}/${LEVELS.length} levels completed`, '');
+  return lines.join('\n');
+}
+function showSummary() {
+  document.getElementById('summaryText').textContent = buildSummaryText();
+  document.getElementById('summaryOverlay').classList.add('visible');
+}
+document.getElementById('closeSummaryBtn').addEventListener('click', () => document.getElementById('summaryOverlay').classList.remove('visible'));
+document.getElementById('copySummaryBtn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(buildSummaryText()); } catch (e) {}
+  const btn = document.getElementById('copySummaryBtn');
+  const orig = btn.textContent; btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = orig; }, 1200);
+});
+// Summary is reachable from the level-select "Send feedback" button and the
+// end-of-run CTA; the top-bar chip is now the level selector (single tap).
+
+buildLevel();
+playLevelTransition();
+</script>
+</body>
+</html>
