@@ -168,7 +168,7 @@
     padding: 12px 16px 20px; flex-wrap: wrap;
   }
   button {
-    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
     font-family: inherit; font-size: 15px; font-weight: 600;
     padding: 11px 20px; border-radius: 14px; border: none;
     background: #ffffff; color: var(--ink);
@@ -290,6 +290,24 @@
   #introTag { font-size: 14px; line-height: 1.55; color: var(--ink-soft); margin: 22px auto 28px; max-width: 250px; }
   #introPlayBtn { width: 100%; justify-content: center; font-size: 17px; padding: 15px; }
   .overlay.visible #introCard { animation: cardRise 0.34s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+  /* Adaptive level-end question — replaces the rate pills on a flagged level;
+     also used inside the give-up overlay. Same warm sheet system. */
+  #solveQuestion { display: none; margin-bottom: 14px; }
+  #solveQuestion.show { display: block; }
+  .q-title { font-size: 13.5px; font-weight: 700; color: var(--ink); margin: 2px 0 11px; line-height: 1.4; text-align: center; }
+  .q-opts { display: grid; gap: 7px; }
+  .q-opt { width: 100%; justify-content: center; padding: 11px 12px; border-radius: 11px; font-size: 13.5px; font-weight: 600; background: #fff; color: var(--ink); box-shadow: 0 1px 4px rgba(58,51,42,0.08); }
+  .q-opt:active { transform: scale(0.98); }
+  .q-otherRow { display: none; gap: 7px; margin-top: 8px; }
+  .q-otherRow.show { display: flex; }
+  .q-otherRow input { flex: 1; min-width: 0; border: 1px solid var(--hair); border-radius: 10px; padding: 9px 11px; font-size: 13px; font-family: inherit; color: var(--ink); background: #fff; }
+  .q-otherRow button { padding: 9px 15px; border-radius: 10px; background: var(--ink); color: #fdfaf3; font-weight: 700; font-size: 13px; }
+  .q-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 11px; }
+  .q-other, .q-dismiss { font-size: 12px; font-weight: 600; color: var(--ink-soft); padding: 6px 8px; background: none; box-shadow: none; }
+  .q-thanks { font-size: 13.5px; font-weight: 700; color: var(--moss); text-align: center; padding: 4px 0 2px; }
+  #giveupCard { max-width: 340px; width: 100%; }
+  .tm-note { font-size: 11px; color: var(--ink-soft); line-height: 1.45; margin: 12px 0 0; text-align: center; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -335,6 +353,7 @@
     <button class="rate-btn" data-v="medium">Just right</button>
     <button class="rate-btn" data-v="hard">Hard</button>
   </div>
+  <div id="solveQuestion"></div>
   <button id="nextBtn" class="primary">Next<span class="btn-icon">→</span></button>
 </div>
 
@@ -363,6 +382,7 @@
       <button class="ghost" id="optResetBtn">Reset progress</button>
       <button class="ghost" id="closeOptionsBtn">Close</button>
     </div>
+    <p class="tm-note">WOVEN records anonymous play stats you can send back — nothing leaves your device until you tap Copy. Reset clears them.</p>
   </div>
 </div>
 
@@ -370,12 +390,19 @@
   <div id="summaryCard" class="card">
     <h2>Your playtest</h2>
     <div id="summaryStats"></div>
-    <p class="card-sub">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your difficulty ratings reach us.</p>
+    <p class="card-sub">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your ratings and play stats reach us.</p>
     <div id="summaryText"></div>
+    <p class="tm-note">Anonymous — these play stats stay on your device until you tap Copy.</p>
     <div class="actions">
       <button class="ghost" id="closeSummaryBtn">Close</button>
       <button class="primary" id="copySummaryBtn">Copy to send</button>
     </div>
+  </div>
+</div>
+
+<div id="giveupOverlay" class="overlay">
+  <div id="giveupCard" class="card">
+    <div id="giveupBody"></div>
   </div>
 </div>
 
@@ -724,9 +751,88 @@ const FTUE = [
 ];
 function ftueFor(def) { for (const f of FTUE) { if (f.test(def) && !seenFtue.has(f.k)) return f; } return null; }
 
+// ============================================================
+// TELEMETRY (TM) — anonymous, on-device playtest metrics + adaptive
+// level-end questions, folded into the copy-back feedback. NOTHING is sent
+// anywhere: it lives in localStorage until the player taps Copy, and clears with
+// "Reset progress". Flagging is 100% BEHAVIOURAL, computed per-player at runtime —
+// the ★ difficulty tags I authored are only echoed in the export, never used to
+// decide when to ask. See the grill-me spec for the full contract.
+// ============================================================
+function playableCells(def) {
+  const vm = def.voidMask; if (!vm) return def.width * def.height;
+  let n = 0; for (let i = 0; i < def.width * def.height; i++) if (!vm[i]) n++; return n;
+}
+const TM_QUESTIONS = {
+  diff: { title: 'Nice — what made that one tough?', opts: [['threads', 'Juggling the threads'], ['timing', 'The gate / order timing'], ['mechanic', "Didn't get the mechanic"], ['fine', 'Nothing — felt fine']] },
+  slow: { title: 'Before your first move — what were you working out?', opts: [['goal', 'What the goal is'], ['route', 'Planning my route'], ['symbol', 'Confused by a symbol'], ['distract', 'Got distracted']] },
+  giveup: { title: 'Heading out — what stopped you here?', opts: [['toohard', 'Too hard right now'], ['nosolution', "Can't see the solution"], ['rules', 'The rules are confusing'], ['break', 'Just taking a break']] },
+};
+const TM = {
+  data: {},                                    // id -> cumulative record (persisted)
+  seq: 0, lastPromptSeq: -99, prompts: 0, dismissStreak: 0, cur: null,   // session-only anti-nag
+  load() { try { this.data = JSON.parse(localStorage.getItem('woven_metrics') || '{}'); } catch (e) { this.data = {}; } },
+  save() { try { localStorage.setItem('woven_metrics', JSON.stringify(this.data)); } catch (e) {} },
+  reset() { this.data = {}; this.seq = 0; this.lastPromptSeq = -99; this.prompts = 0; this.dismissStreak = 0; this.cur = null; try { localStorage.removeItem('woven_metrics'); } catch (e) {} },
+  rec(def) {
+    let r = this.data[def.id];
+    if (!r) r = this.data[def.id] = { id: def.id, tier: def.tier, tags: (def.tags || []).slice(), diff: def.diff || 'normal', timeMs: 0, firstTouchMs: null, undos: 0, redos: 0, restarts: 0, hints: 0, deadEnds: 0, invalids: 0, abandoned: 0, attempts: 0, solved: false, ftueShown: false, flags: [], a: null, aText: null };
+    return r;
+  },
+  startLevel(def) { this.seq++; const r = this.rec(def); r.attempts++; this.cur = { id: def.id, start: Date.now(), firstTouchAt: null, deadFlagged: false, lastInvalid: -1, abandonedThisVisit: false }; this.save(); },
+  _accrue() { if (!this.cur) return; const r = this.data[this.cur.id]; if (r && !r.solved) { r.timeMs += Date.now() - this.cur.start; this.cur.start = Date.now(); } },
+  firstTouch() { if (!this.cur || this.cur.firstTouchAt !== null) return; this.cur.firstTouchAt = Date.now(); const r = this.data[this.cur.id]; if (r && r.firstTouchMs === null) { r.firstTouchMs = Math.max(0, Date.now() - this.cur.start); this.save(); } },
+  ftueShown() { if (!this.cur) return; const r = this.data[this.cur.id]; if (r && !r.ftueShown) { r.ftueShown = true; this.save(); } },
+  bump(field) { if (!this.cur) return; const r = this.data[this.cur.id]; if (r) { r[field]++; this.save(); } },
+  undo() { this.bump('undos'); }, redo() { this.bump('redos'); }, restart() { this.bump('restarts'); }, hint() { this.bump('hints'); },
+  deadEnd() { if (!this.cur || this.cur.deadFlagged) return; this.cur.deadFlagged = true; this.bump('deadEnds'); },
+  clearDead() { if (this.cur) this.cur.deadFlagged = false; },
+  invalid(cell) { if (!this.cur || cell === this.cur.lastInvalid) return; this.cur.lastInvalid = cell; this.bump('invalids'); },
+  moved() { if (this.cur) this.cur.lastInvalid = -1; },
+  tierMedianMs(tier, cells, exceptId) {
+    const times = Object.values(this.data).filter((r) => r.tier === tier && r.solved && r.id !== exceptId && r.timeMs > 0).map((r) => r.timeMs).sort((a, b) => a - b);
+    if (times.length < 3) return cells * 900;   // seed from solution length until enough real solves land
+    return times[Math.floor(times.length / 2)];
+  },
+  computeFlags(def, r) {
+    const flags = [], cells = playableCells(def);
+    const invThresh = Math.max(5, Math.round(cells * 0.5));
+    const med = this.tierMedianMs(def.tier, cells, def.id);
+    if (r.hints > 0 || r.restarts >= 2 || r.deadEnds > 0 || r.invalids >= invThresh || (med > 0 && r.timeMs > med * 2)) flags.push('diff');
+    const slowThresh = (10 + 2 * def.tier) * 1000;
+    if (!r.ftueShown && r.firstTouchMs !== null && r.firstTouchMs > slowThresh) flags.push('slow');
+    return flags;
+  },
+  solved(def) {
+    const r = this.rec(def); if (r.solved) return null;
+    this._accrue(); r.solved = true;
+    r.flags = this.computeFlags(def, r); this.save();
+    if (r.flags.includes('diff')) return 'diff';
+    if (r.flags.includes('slow')) return 'slow';
+    return null;
+  },
+  // Leaving an engaged, unsolved level → always log the abandonment; return a
+  // give-up prompt only after real engagement (>6s).
+  leaving(def) {
+    if (!this.cur || this.cur.id !== def.id) return null;
+    const r = this.data[this.cur.id];
+    if (!r || r.solved || this.cur.firstTouchAt === null || this.cur.abandonedThisVisit) return null;
+    this._accrue(); this.cur.abandonedThisVisit = true; r.abandoned++; this.save();
+    return r.timeMs > 6000 ? 'giveup' : null;
+  },
+  canPrompt() { return this.dismissStreak < 2 && this.prompts < 8 && (this.seq - this.lastPromptSeq) >= 3; },
+  notePrompted() { this.prompts++; this.lastPromptSeq = this.seq; },   // then quiet for the next 2 level-ends
+  answer(def, code, text) { const r = this.rec(def); r.a = code; r.aText = text || null; this.dismissStreak = 0; this.save(); },
+  dismiss() { this.dismissStreak++; },
+};
+TM.load();
+let solveSheetLevel = null;   // guards the once-per-level solve prompt/rating setup
+
 function buildLevel() {
   const def = currentLevelDef();
   engine = buildEngine(def);
+  TM.startLevel(def);
+  solveSheetLevel = null;
   sfxArmed = false; // don't fire state-change sounds during level load
   hintCell = null; if (typeof hintTimer !== 'undefined' && hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
   activeThread = null;
@@ -1042,9 +1148,11 @@ function render() {
     showSolveSheet(firstClear);
   } else {
     hideSolveSheet();
-    if (engine.isDeadEnd()) { msg.textContent = 'Stuck — tap ↶ to step back, or ↻ to restart'; msg.className = 'deadend visible'; }
-    else if (untouched) { const f = ftueFor(def); if (f) { msg.textContent = f.msg; msg.className = 'hint visible'; markFtueSeen(f.k); } else msg.className = ''; }
-    else msg.className = '';
+    if (engine.isDeadEnd()) { msg.textContent = 'Stuck — tap ↶ to step back, or ↻ to restart'; msg.className = 'deadend visible'; TM.deadEnd(); }
+    else { TM.clearDead();
+      if (untouched) { const f = ftueFor(def); if (f) { msg.textContent = f.msg; msg.className = 'hint visible'; markFtueSeen(f.k); TM.ftueShown(); } else msg.className = ''; }
+      else msg.className = '';
+    }
   }
 
   // Hint highlight — a pulsing target on the next correct cell (Zip-style reveal).
@@ -1115,8 +1223,13 @@ function showSolveSheet(firstClear) {
   sub.textContent = isLast ? 'Rate this one, then send your feedback.' : 'How did that feel?';
   if (firstClear) { reward.style.display = 'block'; reward.textContent = '🪙 +' + LEVEL_REWARD; reward.classList.remove('pop'); void reward.offsetWidth; reward.classList.add('pop'); }
   else { reward.style.display = 'none'; }
-  const stored = (progress[def.id] || {}).rating;
-  document.querySelectorAll('.rate-btn').forEach((b) => b.classList.toggle('selected', b.dataset.v === stored));
+  // Once per level: record the solve, compute behavioural flags, and decide
+  // whether this sheet asks the deeper "what made it tough?" question in place
+  // of the always-on rate pills.
+  if (solveSheetLevel !== def.id) {
+    solveSheetLevel = def.id;
+    setupSolveSheetPrompt(def, TM.solved(def));
+  }
   const sheet = document.getElementById('solveSheet');
   if (!sheet.classList.contains('visible')) {
     sheet.classList.add('visible');
@@ -1124,6 +1237,78 @@ function showSolveSheet(firstClear) {
   }
 }
 function hideSolveSheet() { const s = document.getElementById('solveSheet'); if (s) s.classList.remove('visible'); }
+
+// Renders a multiple-choice question (options + ✎ Other free-text + ✕ skip) into
+// `container`. Shared by the solve sheet and the give-up overlay.
+function renderQuestion(container, qKey, def, opts) {
+  const q = TM_QUESTIONS[qKey];
+  container.innerHTML = '';
+  const finish = () => { container.innerHTML = '<div class="q-thanks">Thanks — noted ✓</div>'; };
+  const title = document.createElement('div'); title.className = 'q-title'; title.textContent = q.title; container.appendChild(title);
+  const wrap = document.createElement('div'); wrap.className = 'q-opts';
+  q.opts.forEach(([code, label]) => {
+    const b = document.createElement('button'); b.className = 'q-opt'; b.textContent = label;
+    b.addEventListener('click', () => { TM.answer(def, code); finish(); if (opts.onAnswer) opts.onAnswer(code); });
+    wrap.appendChild(b);
+  });
+  container.appendChild(wrap);
+  const otherRow = document.createElement('div'); otherRow.className = 'q-otherRow';
+  const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'In your own words…'; input.maxLength = 80;
+  const send = document.createElement('button'); send.type = 'button'; send.textContent = 'Send';
+  send.addEventListener('click', () => { TM.answer(def, 'other', input.value.trim()); finish(); if (opts.onAnswer) opts.onAnswer('other'); });
+  otherRow.appendChild(input); otherRow.appendChild(send); container.appendChild(otherRow);
+  const foot = document.createElement('div'); foot.className = 'q-foot';
+  const other = document.createElement('button'); other.type = 'button'; other.className = 'q-other'; other.textContent = '✎ Other';
+  other.addEventListener('click', () => { otherRow.classList.toggle('show'); if (otherRow.classList.contains('show')) input.focus(); });
+  const skip = document.createElement('button'); skip.type = 'button'; skip.className = 'q-dismiss'; skip.textContent = '✕ Skip';
+  skip.addEventListener('click', () => { TM.dismiss(); if (opts.onDismiss) opts.onDismiss(); });
+  foot.appendChild(other); foot.appendChild(skip); container.appendChild(foot);
+}
+
+// Solve sheet: show the flagged-level question INSTEAD of the pills (never both);
+// skipping the question falls back to the pills so a rating is still possible.
+function setupSolveSheetPrompt(def, qKey) {
+  const rateRow = document.getElementById('rateRow');
+  const qBox = document.getElementById('solveQuestion');
+  const sub = document.getElementById('solveSub');
+  const showPills = () => {
+    qBox.classList.remove('show'); qBox.innerHTML = '';
+    rateRow.style.display = ''; sub.style.display = '';
+    const stored = (progress[def.id] || {}).rating;
+    document.querySelectorAll('.rate-btn').forEach((b) => b.classList.toggle('selected', b.dataset.v === stored));
+  };
+  if (qKey && TM.canPrompt()) {
+    TM.notePrompted();
+    rateRow.style.display = 'none';
+    sub.style.display = 'none';   // the question title is the prompt now — avoid a double heading
+    qBox.classList.add('show');
+    renderQuestion(qBox, qKey, def, {
+      onAnswer: (code) => {
+        // The difficulty question preserves the rating datapoint the hidden pills
+        // would have captured ("felt fine" = just-right, anything else = hard).
+        if (qKey === 'diff') {
+          const rating = code === 'fine' ? 'medium' : 'hard';
+          progress[def.id] = Object.assign({}, progress[def.id], { done: true, rating });
+          saveProgress();
+        }
+      },
+      onDismiss: showPills,
+    });
+  } else {
+    showPills();
+  }
+}
+
+// Give-up overlay: shown when leaving an engaged, unsolved level (if allowed by
+// the anti-nag budget); either path then proceeds into the level selector.
+function showGiveup(def, proceed) {
+  const ov = document.getElementById('giveupOverlay');
+  renderQuestion(document.getElementById('giveupBody'), 'giveup', def, {
+    onAnswer: () => { setTimeout(() => { ov.classList.remove('visible'); proceed(); }, 650); },
+    onDismiss: () => { ov.classList.remove('visible'); proceed(); },
+  });
+  ov.classList.add('visible');
+}
 
 function updateProgressBar() {
   const fill = document.getElementById('progressFill');
@@ -1218,6 +1403,7 @@ function useHint() {
   }
   if (target === null) { flash('A thread has strayed — Undo, then try a hint'); return; }
   coins -= HINT_COST; saveCoins(); updateCoins();
+  TM.hint();
   hintCell = target; render();
   // Persist the reveal until the player moves; long fallback so it never lingers forever.
   if (hintTimer) clearTimeout(hintTimer);
@@ -1237,7 +1423,7 @@ document.getElementById('hapticsToggle').addEventListener('click', () => { hapti
 document.getElementById('optSubmitBtn').addEventListener('click', () => { document.getElementById('optionsOverlay').classList.remove('visible'); showSummary(); });
 document.getElementById('optResetBtn').addEventListener('click', () => {
   if (!window.confirm('Reset all progress, coins and tutorial hints?')) return;
-  progress = {}; coins = 0; seenFtue = new Set();
+  progress = {}; coins = 0; seenFtue = new Set(); TM.reset();
   localStorage.removeItem('woven_progress'); localStorage.removeItem('woven_coins'); localStorage.removeItem('woven_ftue');
   saveCoins(); updateCoins(); levelIndex = 0; buildLevel(); playLevelTransition();
   document.getElementById('optionsOverlay').classList.remove('visible');
@@ -1309,6 +1495,7 @@ function handleDown(clientX, clientY) {
   activeThread = pick;
   gestureFloor[pick] = engine.threads[pick].path.length;
   engine.beginGesture();
+  TM.firstTouch();
   isDown = true;
 }
 
@@ -1332,7 +1519,8 @@ function handleMove(clientX, clientY) {
   // A hint clears once the player actually moves the thread.
   if (engine.threads[ti].head !== h && hintCell !== null) { hintCell = null; if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; } }
   render();
-  if (rejected) { triggerShake(ti); SFX.error(); }
+  if (rejected) { triggerShake(ti); SFX.error(); TM.invalid(cell); }
+  else TM.moved();
 }
 
 function endGesture() {
@@ -1354,6 +1542,7 @@ document.getElementById('undoBtn').addEventListener('click', () => {
   if (!engine.canUndo) return;
   engine.undo();
   activeThread = null; // path changed — re-pick the thread on the next touch
+  TM.undo();
   SFX.retract();
   render();
 });
@@ -1361,6 +1550,7 @@ document.getElementById('redoBtn').addEventListener('click', () => {
   if (!engine.canRedo) return;
   engine.redo();
   activeThread = null;
+  TM.redo();
   SFX.step();
   render();
 });
@@ -1370,6 +1560,7 @@ document.getElementById('restartBtn').addEventListener('click', () => {
   activeThread = null;
   lastHeadCells = {};
   gestureFloor = {};
+  TM.restart();
   render();
   playLevelTransition();
 });
@@ -1393,6 +1584,14 @@ document.querySelectorAll('.rate-btn').forEach((btn) => {
 // LEVEL SELECT
 // ============================================================
 function openLevelSelect() {
+  // Leaving an engaged, unsolved level: always log it; ask why only if the
+  // anti-nag budget allows, then continue into the selector either way.
+  const def = currentLevelDef();
+  const qKey = TM.leaving(def);
+  if (qKey && TM.canPrompt()) { TM.notePrompted(); showGiveup(def, renderLevelSelect); return; }
+  renderLevelSelect();
+}
+function renderLevelSelect() {
   const tierNames = ['', 'Core', 'Gates', 'Crossings', 'Advanced Gates', 'Multi-Thread', 'Blend'];
   const container = document.getElementById('tierList');
   container.innerHTML = '';
@@ -1452,25 +1651,46 @@ document.getElementById('feedbackFromSelectBtn').addEventListener('click', () =>
 // SESSION SUMMARY (no server — Artifact can't make outbound network calls;
 // the player copies this back through whatever channel they're using).
 // ============================================================
+function fmtDur(ms) { const s = Math.round(ms / 1000); if (s < 90) return s + 's'; const m = Math.floor(s / 60), rs = s % 60; return m + 'm' + (rs ? ' ' + rs + 's' : ''); }
 function buildSummaryText() {
-  const lines = ['WOVEN playtest summary', ''];
-  let doneCount = 0;
-  for (const l of LEVELS) {
-    const p = progress[l.id];
-    if (p && p.done) {
-      doneCount++;
-      lines.push(`Level ${l.id} (Tier ${l.tier}, ${l.tags.join('/')})${p.rating ? ' — ' + p.rating : ''}`);
+  const done = LEVELS.filter((l) => (progress[l.id] || {}).done);
+  const recs = Object.values(TM.data);
+  const flagged = recs.filter((r) => r.flags && r.flags.length).length;
+  const abandoned = recs.filter((r) => r.abandoned > 0 && !r.solved).length;
+  const totalMs = recs.reduce((s, r) => s + (r.timeMs || 0), 0);
+  const rc = { easy: 0, medium: 0, hard: 0 };
+  for (const l of LEVELS) { const p = progress[l.id]; if (p && p.rating && rc[p.rating] !== undefined) rc[p.rating]++; }
+  const lines = [];
+  lines.push('WOVEN playtest — feedback', '');
+  lines.push(`Solved ${done.length}/${LEVELS.length}  ·  flagged ${flagged}  ·  left unsolved ${abandoned}`);
+  lines.push(`Play time ~${fmtDur(totalMs)}  ·  coins ${coins}`);
+  lines.push(`Ratings — easy ${rc.easy} · just-right ${rc.medium} · hard ${rc.hard}`, '');
+  // One compact line per NOTABLE level (flagged / rated / abandoned / answered).
+  const notable = LEVELS.map((l) => TM.data[l.id]).filter(Boolean).filter((r) => (r.flags && r.flags.length) || (progress[r.id] || {}).rating || r.abandoned > 0 || r.a);
+  if (notable.length) {
+    lines.push('▼ keep this block — it is the useful part');
+    lines.push('legend: L# | ★my-diff | mechanics | time | u=undo ro=redo r=restart h=hint dead=deadend inv=invalid | ft=1st-touch | rate | FLAG | A=answer');
+    for (const r of notable) {
+      const seg = ['L' + r.id, '★' + (r.diff || 'normal'), (r.tags && r.tags.length ? r.tags.join(',') : 'base'), Math.round((r.timeMs || 0) / 1000) + 's',
+        `u${r.undos} ro${r.redos} r${r.restarts} h${r.hints} dead${r.deadEnds} inv${r.invalids}`,
+        'ft' + (r.firstTouchMs !== null ? Math.round(r.firstTouchMs / 1000) + 's' : '-')];
+      const rating = (progress[r.id] || {}).rating; if (rating) seg.push('rate:' + rating);
+      if (r.flags && r.flags.length) seg.push('FLAG:' + r.flags.join(','));
+      if (!r.solved && r.abandoned > 0) seg.push('LEFT');
+      if (r.a) seg.push('A:' + r.a + (r.a === 'other' && r.aText ? '(' + r.aText + ')' : ''));
+      lines.push(seg.join(' | '));
     }
+  } else {
+    lines.push('(No notable levels yet — play a few and this fills in.)');
   }
-  lines.splice(1, 0, `${doneCount}/${LEVELS.length} levels completed`, '');
   return lines.join('\n');
 }
 function showSummary() {
   const done = LEVELS.filter((l) => (progress[l.id] || {}).done);
-  const rated = done.filter((l) => (progress[l.id] || {}).rating).length;
+  const flagged = Object.values(TM.data).filter((r) => r.flags && r.flags.length).length;
   document.getElementById('summaryStats').innerHTML =
     `<div class="stat"><b>${done.length}</b><span>Solved</span></div>`
-    + `<div class="stat"><b>${rated}</b><span>Rated</span></div>`
+    + `<div class="stat"><b>${flagged}</b><span>Flagged</span></div>`
     + `<div class="stat"><b>${coins}</b><span>Coins</span></div>`;
   document.getElementById('summaryText').textContent = buildSummaryText();
   document.getElementById('summaryOverlay').classList.add('visible');
@@ -1487,7 +1707,7 @@ document.getElementById('copySummaryBtn').addEventListener('click', async () => 
 
 // First-run title screen — shown once per browser, before the first level.
 (function initIntro() {
-  const play = () => { document.getElementById('introOverlay').classList.remove('visible'); localStorage.setItem('woven_seen_intro', '1'); ensureAudio(); };
+  const play = () => { document.getElementById('introOverlay').classList.remove('visible'); localStorage.setItem('woven_seen_intro', '1'); ensureAudio(); if (TM.cur) TM.cur.start = Date.now(); /* don't count intro-reading time */ };
   document.getElementById('introPlayBtn').addEventListener('click', play);
   const firstRun = localStorage.getItem('woven_seen_intro') !== '1' && Object.keys(progress).length === 0;
   if (firstRun) document.getElementById('introOverlay').classList.add('visible');
