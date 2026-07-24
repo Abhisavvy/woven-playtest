@@ -69,7 +69,7 @@
     padding: 18px 20px 6px;
   }
   #topBand .top-right { display: flex; align-items: center; gap: 4px; }
-  #optionsBtn { font-size: 17px; padding: 5px 8px; line-height: 1; }
+  #optionsBtn, #feedbackBtn { font-size: 17px; padding: 5px 8px; line-height: 1; }
   #coinChip { font-size: 13px; font-weight: 700; color: var(--ink); display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; background: rgba(199,122,33,0.12); border-radius: 11px; font-variant-numeric: tabular-nums; }
   #hintBtn .hint-cost { font-size: 11px; font-weight: 700; color: var(--amber); background: rgba(199,122,33,0.14); border-radius: 8px; padding: 1px 5px; margin-left: 5px; }
   #hintBtn:disabled .hint-cost { color: var(--ink-soft); background: rgba(58,51,42,0.08); }
@@ -277,7 +277,8 @@
   .stat b { display: block; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
   .stat span { font-size: 10.5px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
   #summaryText { font-family: 'SF Mono', 'Consolas', monospace; font-size: 11.5px; color: var(--ink-soft); background: var(--cream); border-radius: 12px; padding: 12px; white-space: pre-wrap; max-height: 190px; overflow-y: auto; }
-  .card .actions { display: flex; gap: 10px; margin-top: 16px; }
+  #summaryCard #sendFeedbackBtn { width: 100%; justify-content: center; font-size: 15px; padding: 13px; margin-top: 2px; }
+  .card .actions { display: flex; gap: 10px; margin-top: 10px; }
   .card .actions button { flex: 1; justify-content: center; }
 
   /* First-run title screen */
@@ -316,6 +317,7 @@
     <span id="wordmark">WOVEN</span>
     <div class="top-right">
       <span id="coinChip" aria-label="Coins">🪙 <span id="coinCount">0</span></span>
+      <button id="feedbackBtn" class="ghost" aria-label="Send feedback">✉</button>
       <button id="optionsBtn" class="ghost" aria-label="Options">⚙</button>
       <button id="levelSelectBtn" aria-label="Choose a level">
         <span id="levelInfo">
@@ -390,12 +392,13 @@
   <div id="summaryCard" class="card">
     <h2>Your playtest</h2>
     <div id="summaryStats"></div>
-    <p class="card-sub">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your ratings and play stats reach us.</p>
+    <p class="card-sub" id="summaryCardSub">Tap <strong>Send feedback</strong> to share this straight from your phone — WhatsApp, Slack, Mail, whatever you already use.</p>
     <div id="summaryText"></div>
-    <p class="tm-note">Anonymous — these play stats stay on your device until you tap Copy.</p>
+    <p class="tm-note">Anonymous — these play stats stay on your device until you send or copy them.</p>
+    <button class="primary" id="sendFeedbackBtn">✉ Send feedback<span class="btn-icon">→</span></button>
     <div class="actions">
       <button class="ghost" id="closeSummaryBtn">Close</button>
-      <button class="primary" id="copySummaryBtn">Copy to send</button>
+      <button class="ghost" id="copySummaryBtn">Copy instead</button>
     </div>
   </div>
 </div>
@@ -1693,17 +1696,41 @@ function showSummary() {
     + `<div class="stat"><b>${flagged}</b><span>Flagged</span></div>`
     + `<div class="stat"><b>${coins}</b><span>Coins</span></div>`;
   document.getElementById('summaryText').textContent = buildSummaryText();
+  document.getElementById('summaryCardSub').textContent = navigator.share
+    ? 'Tap Send feedback to share this straight from your phone — WhatsApp, Slack, Mail, whatever you already use.'
+    : 'Tap Send feedback to email it to us directly, or copy it to paste anywhere.';
   document.getElementById('summaryOverlay').classList.add('visible');
 }
 document.getElementById('closeSummaryBtn').addEventListener('click', () => document.getElementById('summaryOverlay').classList.remove('visible'));
+
+// ---- Send feedback: no server, so this is a client-only handoff to whatever
+// channel the tester already has open. Prefers the native share sheet (lets
+// them pick WhatsApp/Slack/Messages/Mail themselves); falls back to a
+// pre-filled email if Share isn't supported (mostly desktop browsers).
+const FEEDBACK_EMAIL = 'abhishekdutta@playsimple.in';
+function mailtoFeedbackLink(text) {
+  const MAX = 1500; // mailto bodies ride in the URL — keep this well under browser URL limits
+  const body = text.length > MAX ? text.slice(0, MAX) + '\n\n…(truncated — use Copy in-game for the full data)' : text;
+  return `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent('WOVEN playtest feedback')}&body=${encodeURIComponent(body)}`;
+}
+document.getElementById('sendFeedbackBtn').addEventListener('click', async () => {
+  const text = buildSummaryText();
+  if (navigator.share) {
+    try { await navigator.share({ title: 'WOVEN playtest feedback', text }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; /* they cancelled the share sheet — don't force email instead */ }
+  }
+  window.location.href = mailtoFeedbackLink(text);
+});
 document.getElementById('copySummaryBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(buildSummaryText()); } catch (e) {}
   const btn = document.getElementById('copySummaryBtn');
   const orig = btn.textContent; btn.textContent = 'Copied!';
   setTimeout(() => { btn.textContent = orig; }, 1200);
 });
-// Summary is reachable from the level-select "Send feedback" button and the
-// end-of-run CTA; the top-bar chip is now the level selector (single tap).
+document.getElementById('feedbackBtn').addEventListener('click', showSummary);
+// Summary/feedback is reachable from: the top-bar ✉ icon (always visible),
+// Options -> Submit feedback, and the level-select header -> Send feedback —
+// plus the natural end-of-run CTA on the very last level's solve sheet.
 
 // First-run title screen — shown once per browser, before the first level.
 (function initIntro() {
