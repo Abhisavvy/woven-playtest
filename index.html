@@ -36,6 +36,16 @@
     --moss: #4C8C4A;
     --gate-closed: #9c4a45;
     --gate-open: #6b9457;
+    /* shared UI tokens — one warm system across every surface */
+    --panel: #FBF7EF;
+    --panel-edge: #EADFC9;
+    --hair: rgba(58,51,42,0.09);
+    --scrim: rgba(46,40,32,0.44);
+    --shadow-card: 0 12px 44px rgba(58,51,42,0.20);
+    --shadow-soft: 0 2px 6px rgba(58,51,42,0.10);
+    --r-card: 22px;
+    --r-ctrl: 14px;
+    --on: #fdfaf3;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -63,16 +73,25 @@
   #coinChip { font-size: 13px; font-weight: 700; color: var(--ink); display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; background: rgba(199,122,33,0.12); border-radius: 11px; font-variant-numeric: tabular-nums; }
   #hintBtn .hint-cost { font-size: 11px; font-weight: 700; color: var(--amber); background: rgba(199,122,33,0.14); border-radius: 8px; padding: 1px 5px; margin-left: 5px; }
   #hintBtn:disabled .hint-cost { color: var(--ink-soft); background: rgba(58,51,42,0.08); }
-  /* Options overlay */
-  #optionsOverlay { position: fixed; inset: 0; background: rgba(58,51,42,0.5); z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; }
-  #optionsOverlay.visible { display: flex; }
-  #optionsCard { background: #fff; border-radius: 20px; padding: 22px; max-width: 380px; width: 100%; }
-  #optionsCard h2 { font-size: 16px; margin: 0 0 14px; }
-  .opt-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(58,51,42,0.08); font-size: 15px; }
-  .opt-toggle { min-width: 58px; background: rgba(58,51,42,0.08); box-shadow: none; color: var(--ink-soft); font-weight: 700; }
-  .opt-toggle.on { background: var(--moss); color: #fdfaf3; }
-  .opt-note { font-size: 12px; color: var(--ink-soft); margin: 10px 0 0; line-height: 1.4; }
-  .opt-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  /* Shared overlay + card system (options / summary / intro) */
+  .overlay { position: fixed; inset: 0; background: var(--scrim); z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; opacity: 0; transition: opacity 0.2s ease; }
+  .overlay.visible { display: flex; opacity: 1; }
+  .card { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 24px; max-width: 400px; width: 100%; }
+  .overlay.visible .card { animation: cardRise 0.28s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+  @keyframes cardRise { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .overlay.visible .card { animation: none; } }
+  .card h2 { font-size: 17px; margin: 0 0 4px; letter-spacing: 0.01em; }
+  .card .card-sub { font-size: 13px; line-height: 1.45; color: var(--ink-soft); margin: 0 0 16px; }
+  #optionsCard h2 { margin-bottom: 14px; }
+  .opt-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair); font-size: 15px; font-weight: 600; }
+  /* pill switches */
+  .opt-toggle { position: relative; width: 52px; height: 30px; border-radius: 15px; background: rgba(58,51,42,0.14); box-shadow: none; padding: 0; font-size: 0; flex-shrink: 0; transition: background 0.2s ease; }
+  .opt-toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(58,51,42,0.28); transition: transform 0.2s cubic-bezier(0.3,0.8,0.3,1); }
+  .opt-toggle:hover:not(:disabled) { transform: none; box-shadow: none; }
+  .opt-toggle.on { background: var(--moss); }
+  .opt-toggle.on::after { transform: translateX(22px); }
+  .opt-note { font-size: 12px; color: var(--ink-soft); margin: 12px 0 0; line-height: 1.45; }
+  .opt-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
   #wordmark {
     position: relative; padding-bottom: 7px;
     font-size: 15px; font-weight: 700; letter-spacing: 0.08em; color: var(--ink);
@@ -217,40 +236,60 @@
     display: none; flex-direction: column; max-width: 480px; margin: 0 auto;
   }
   #levelSelect.visible { display: flex; }
-  #levelSelectHeader { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 8px; gap: 8px; }
-  #levelSelectHeader h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: 0.04em; }
-  #levelSelectHeader .header-actions { display: flex; align-items: center; gap: 2px; }
-  #feedbackFromSelectBtn { font-size: 13px; color: var(--amber); }
+  #levelSelectHeader { padding: 20px 20px 12px; border-bottom: 1px solid var(--hair); }
+  #lsTopRow { display: flex; align-items: center; justify-content: space-between; }
+  #levelSelectHeader h1 { font-size: 21px; font-weight: 800; margin: 0; letter-spacing: 0.02em; }
+  #closeSelectBtn { font-size: 16px; padding: 8px 12px; }
+  #lsSubRow { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  #lsStat { font-size: 13px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  #lsStat b { color: var(--ink); }
+  #lsStat .coin { color: var(--amber); }
+  #feedbackFromSelectBtn { font-size: 13px; color: var(--amber); padding: 6px 8px; margin-right: -8px; }
   #feedbackFromSelectBtn:hover:not(:disabled) { color: var(--amber); background: rgba(199,122,33,0.08); }
-  #tierList { flex: 1; overflow-y: auto; padding: 8px 16px 24px; }
-  .tier-block { margin-bottom: 20px; }
-  .tier-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); margin: 0 0 8px 4px; }
-  .tier-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  #tierList { flex: 1; overflow-y: auto; padding: 14px 16px 28px; }
+  .tier-block { margin-bottom: 22px; }
+  .tier-title { display: flex; align-items: center; gap: 9px; margin: 0 0 10px 2px; }
+  .tier-name { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink); white-space: nowrap; }
+  .tier-bar { flex: 1; height: 3px; border-radius: 2px; background: var(--hair); overflow: hidden; }
+  .tier-bar > i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--amber), var(--teal)); transition: width 0.4s ease; }
+  .tier-count { font-size: 11px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tier-count.complete { color: var(--moss); }
+  .tier-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
   .level-chip {
-    aspect-ratio: 1; border-radius: 12px; border: none; background: #fff;
+    aspect-ratio: 1; border-radius: 13px; border: none; background: var(--panel);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 15px; color: var(--ink);
-    box-shadow: 0 1px 4px rgba(58,51,42,0.08); cursor: pointer; position: relative;
+    font-weight: 800; font-size: 15px; color: var(--ink);
+    box-shadow: var(--shadow-soft); cursor: pointer; position: relative;
   }
-  .level-chip.done { background: var(--ink); color: #fdfaf3; }
-  .level-chip.current { outline: 2px solid var(--amber); outline-offset: 2px; }
-  .level-chip .diff-dot { position: absolute; bottom: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; }
-  .level-chip .spike { position: absolute; top: 3px; left: 5px; font-size: 8px; letter-spacing: -1.5px; line-height: 1; }
+  .level-chip.done { background: var(--ink); color: var(--on); }
+  .level-chip.current { outline: 2.5px solid var(--amber); outline-offset: 2px; }
+  .level-chip .diff-dot { position: absolute; bottom: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; }
+  .level-chip .spike { position: absolute; top: 4px; left: 6px; font-size: 8px; letter-spacing: -1.5px; line-height: 1; }
   .level-chip .spike.hard { color: var(--amber); }
   .level-chip .spike.xhard { color: var(--gate-closed); }
+  .level-chip.done .spike.hard { color: #e6b46a; }
+  .level-chip.done .spike.xhard { color: #d98a84; }
 
-  /* End-of-session summary */
-  #summaryOverlay {
-    position: fixed; inset: 0; background: rgba(58,51,42,0.5); z-index: 20;
-    display: none; align-items: center; justify-content: center; padding: 20px;
+  /* End-of-session summary / feedback */
+  #summaryCard { max-height: 84vh; overflow-y: auto; }
+  #summaryStats { display: flex; gap: 8px; margin: 0 0 14px; }
+  .stat { flex: 1; background: var(--cream); border-radius: 12px; padding: 11px 6px; text-align: center; }
+  .stat b { display: block; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .stat span { font-size: 10.5px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+  #summaryText { font-family: 'SF Mono', 'Consolas', monospace; font-size: 11.5px; color: var(--ink-soft); background: var(--cream); border-radius: 12px; padding: 12px; white-space: pre-wrap; max-height: 190px; overflow-y: auto; }
+  .card .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .card .actions button { flex: 1; justify-content: center; }
+
+  /* First-run title screen */
+  #introCard {
+    background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-card);
+    box-shadow: var(--shadow-card); padding: 44px 30px 34px; max-width: 360px; width: 100%; text-align: center;
   }
-  #summaryOverlay.visible { display: flex; }
-  #summaryCard { background: #fff; border-radius: 20px; padding: 22px; max-width: 420px; width: 100%; max-height: 80vh; overflow-y: auto; }
-  #summaryCard h2 { font-size: 16px; margin: 0 0 6px; }
-  .summary-lede { font-size: 13px; line-height: 1.4; color: var(--ink-soft); margin: 0 0 12px; }
-  .summary-lede strong { color: var(--ink); }
-  #summaryText { font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; background: var(--cream); border-radius: 10px; padding: 12px; white-space: pre-wrap; max-height: 260px; overflow-y: auto; }
-  #summaryCard .actions { display: flex; gap: 10px; margin-top: 14px; }
+  #introMark { position: relative; display: inline-block; font-size: 42px; font-weight: 800; letter-spacing: 0.14em; padding-bottom: 15px; color: var(--ink); }
+  #introMark::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 66px; height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--amber) 50%, var(--teal) 50%); }
+  #introTag { font-size: 14px; line-height: 1.55; color: var(--ink-soft); margin: 22px auto 28px; max-width: 250px; }
+  #introPlayBtn { width: 100%; justify-content: center; font-size: 17px; padding: 15px; }
+  .overlay.visible #introCard { animation: cardRise 0.34s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
 </style>
 </head>
 <body>
@@ -301,20 +340,23 @@
 
 <div id="levelSelect">
   <div id="levelSelectHeader">
-    <h1>Select a level</h1>
-    <div class="header-actions">
+    <div id="lsTopRow">
+      <h1>Levels</h1>
+      <button class="ghost" id="closeSelectBtn" aria-label="Close">✕ Close</button>
+    </div>
+    <div id="lsSubRow">
+      <span id="lsStat"></span>
       <button class="ghost" id="feedbackFromSelectBtn">✉ Send feedback</button>
-      <button class="ghost" id="closeSelectBtn">Close</button>
     </div>
   </div>
   <div id="tierList"></div>
 </div>
 
-<div id="optionsOverlay">
-  <div id="optionsCard">
+<div id="optionsOverlay" class="overlay">
+  <div id="optionsCard" class="card">
     <h2>Options</h2>
-    <div class="opt-row"><span>Sound</span><button id="soundToggle" class="opt-toggle">On</button></div>
-    <div class="opt-row"><span>Haptics (vibration)</span><button id="hapticsToggle" class="opt-toggle">On</button></div>
+    <div class="opt-row"><span>Sound</span><button id="soundToggle" class="opt-toggle" aria-label="Toggle sound">On</button></div>
+    <div class="opt-row"><span>Haptics (vibration)</span><button id="hapticsToggle" class="opt-toggle" aria-label="Toggle haptics">On</button></div>
     <p class="opt-note">Haptics work on most Android devices; iPhone browsers don't support vibration.</p>
     <div class="opt-actions">
       <button class="primary" id="optSubmitBtn">✉ Submit feedback</button>
@@ -324,15 +366,24 @@
   </div>
 </div>
 
-<div id="summaryOverlay">
-  <div id="summaryCard">
-    <h2>Send your feedback</h2>
-    <p class="summary-lede">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your difficulty ratings reach us.</p>
+<div id="summaryOverlay" class="overlay">
+  <div id="summaryCard" class="card">
+    <h2>Your playtest</h2>
+    <div id="summaryStats"></div>
+    <p class="card-sub">Tap <strong>Copy</strong>, then paste this back to whoever shared the game with you — it's how your difficulty ratings reach us.</p>
     <div id="summaryText"></div>
     <div class="actions">
       <button class="ghost" id="closeSummaryBtn">Close</button>
       <button class="primary" id="copySummaryBtn">Copy to send</button>
     </div>
+  </div>
+</div>
+
+<div id="introOverlay" class="overlay">
+  <div id="introCard">
+    <div id="introMark">WOVEN</div>
+    <p id="introTag">Two or more threads. Fill every cell, and never let them cross.</p>
+    <button class="primary" id="introPlayBtn">Play<span class="btn-icon">→</span></button>
   </div>
 </div>
 
@@ -1345,16 +1396,23 @@ function openLevelSelect() {
   const tierNames = ['', 'Core', 'Gates', 'Crossings', 'Advanced Gates', 'Multi-Thread', 'Blend'];
   const container = document.getElementById('tierList');
   container.innerHTML = '';
+  const totalDone = LEVELS.filter((l) => (progress[l.id] || {}).done).length;
+  document.getElementById('lsStat').innerHTML = `<b>${totalDone}</b> / ${LEVELS.length} solved &nbsp;·&nbsp; <span class="coin">🪙 ${coins}</span>`;
   for (let tier = 1; tier <= 6; tier++) {
+    const inTier = LEVELS.filter((l) => l.tier === tier);
+    const doneInTier = inTier.filter((l) => (progress[l.id] || {}).done).length;
+    const complete = doneInTier === inTier.length;
     const block = document.createElement('div');
     block.className = 'tier-block';
     const title = document.createElement('div');
     title.className = 'tier-title';
-    title.textContent = `Tier ${tier} — ${tierNames[tier]}`;
+    title.innerHTML = `<span class="tier-name">${tier} · ${tierNames[tier]}</span>`
+      + `<span class="tier-bar"><i style="width:${Math.round(doneInTier / inTier.length * 100)}%"></i></span>`
+      + `<span class="tier-count${complete ? ' complete' : ''}">${complete ? '✓ ' : ''}${doneInTier}/${inTier.length}</span>`;
     block.appendChild(title);
     const grid = document.createElement('div');
     grid.className = 'tier-grid';
-    LEVELS.filter((l) => l.tier === tier).forEach((l, idx) => {
+    inTier.forEach((l) => {
       const chip = document.createElement('button');
       const globalIdx = LEVELS.indexOf(l);
       const p = progress[l.id];
@@ -1408,6 +1466,12 @@ function buildSummaryText() {
   return lines.join('\n');
 }
 function showSummary() {
+  const done = LEVELS.filter((l) => (progress[l.id] || {}).done);
+  const rated = done.filter((l) => (progress[l.id] || {}).rating).length;
+  document.getElementById('summaryStats').innerHTML =
+    `<div class="stat"><b>${done.length}</b><span>Solved</span></div>`
+    + `<div class="stat"><b>${rated}</b><span>Rated</span></div>`
+    + `<div class="stat"><b>${coins}</b><span>Coins</span></div>`;
   document.getElementById('summaryText').textContent = buildSummaryText();
   document.getElementById('summaryOverlay').classList.add('visible');
 }
@@ -1420,6 +1484,14 @@ document.getElementById('copySummaryBtn').addEventListener('click', async () => 
 });
 // Summary is reachable from the level-select "Send feedback" button and the
 // end-of-run CTA; the top-bar chip is now the level selector (single tap).
+
+// First-run title screen — shown once per browser, before the first level.
+(function initIntro() {
+  const play = () => { document.getElementById('introOverlay').classList.remove('visible'); localStorage.setItem('woven_seen_intro', '1'); ensureAudio(); };
+  document.getElementById('introPlayBtn').addEventListener('click', play);
+  const firstRun = localStorage.getItem('woven_seen_intro') !== '1' && Object.keys(progress).length === 0;
+  if (firstRun) document.getElementById('introOverlay').classList.add('visible');
+})();
 
 buildLevel();
 playLevelTransition();
