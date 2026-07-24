@@ -278,6 +278,7 @@
   .stat span { font-size: 10.5px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
   #summaryText { font-family: 'SF Mono', 'Consolas', monospace; font-size: 11.5px; color: var(--ink-soft); background: var(--cream); border-radius: 12px; padding: 12px; white-space: pre-wrap; max-height: 190px; overflow-y: auto; }
   #summaryCard #sendFeedbackBtn { width: 100%; justify-content: center; font-size: 15px; padding: 13px; margin-top: 2px; }
+  #summaryCard #emailFeedbackBtn { width: 100%; justify-content: center; font-size: 12.5px; padding: 8px; margin-top: 6px; box-shadow: none; }
   .card .actions { display: flex; gap: 10px; margin-top: 10px; }
   .card .actions button { flex: 1; justify-content: center; }
 
@@ -395,10 +396,11 @@
     <p class="card-sub" id="summaryCardSub">Tap <strong>Send feedback</strong> to share this straight from your phone — WhatsApp, Slack, Mail, whatever you already use.</p>
     <div id="summaryText"></div>
     <p class="tm-note">Anonymous — these play stats stay on your device until you send or copy them.</p>
-    <button class="primary" id="sendFeedbackBtn">✉ Send feedback<span class="btn-icon">→</span></button>
+    <button class="primary" id="sendFeedbackBtn">✉ Share feedback<span class="btn-icon">→</span></button>
+    <button class="ghost" id="emailFeedbackBtn">Email it directly instead</button>
     <div class="actions">
       <button class="ghost" id="closeSummaryBtn">Close</button>
-      <button class="ghost" id="copySummaryBtn">Copy instead</button>
+      <button class="ghost" id="copySummaryBtn">Copy</button>
     </div>
   </div>
 </div>
@@ -1697,32 +1699,44 @@ function showSummary() {
     + `<div class="stat"><b>${coins}</b><span>Coins</span></div>`;
   document.getElementById('summaryText').textContent = buildSummaryText();
   document.getElementById('summaryCardSub').textContent = navigator.share
-    ? 'Tap Send feedback to share this straight from your phone — WhatsApp, Slack, Mail, whatever you already use.'
-    : 'Tap Send feedback to email it to us directly, or copy it to paste anywhere.';
+    ? 'Share sends this to whatever app you pick. If you pick Mail/Gmail, the address won’t auto-fill (that’s an app limitation) — use Email it directly below instead.'
+    : 'Tap Email it directly to send this to us with the address pre-filled, or copy it to paste anywhere.';
   document.getElementById('summaryOverlay').classList.add('visible');
 }
 document.getElementById('closeSummaryBtn').addEventListener('click', () => document.getElementById('summaryOverlay').classList.remove('visible'));
 
 // ---- Send feedback: no server, so this is a client-only handoff to whatever
-// channel the tester already has open. Prefers the native share sheet (lets
-// them pick WhatsApp/Slack/Messages/Mail themselves); falls back to a
-// pre-filled email if Share isn't supported (mostly desktop browsers).
+// channel the tester already has open.
+// IMPORTANT: navigator.share() (the OS share sheet — WhatsApp/Slack/Messages/
+// Mail all show up there) has no concept of a "recipient" at all; if the
+// player picks Gmail from that sheet they get subject+body but an EMPTY To:
+// field, because the underlying share intent simply carries no address field.
+// Only a real mailto: link can pre-fill the recipient. So: Share is the
+// one-tap option for chat apps, and Email is a SEPARATE, always-mailto button
+// for anyone who specifically wants it pre-addressed.
 const FEEDBACK_EMAIL = 'abhishek.dt.97@gmail.com';
+function buildShareText() {
+  // A destination line up front — belt-and-suspenders for the share-sheet
+  // blank-recipient case (Gmail) and for chat apps with no address field at all.
+  return `Please send to: ${FEEDBACK_EMAIL}\n\n${buildSummaryText()}`;
+}
 function mailtoFeedbackLink(text) {
   const MAX = 1500; // mailto bodies ride in the URL — keep this well under browser URL limits
   const body = text.length > MAX ? text.slice(0, MAX) + '\n\n…(truncated — use Copy in-game for the full data)' : text;
   return `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent('WOVEN playtest feedback')}&body=${encodeURIComponent(body)}`;
 }
 document.getElementById('sendFeedbackBtn').addEventListener('click', async () => {
-  const text = buildSummaryText();
   if (navigator.share) {
-    try { await navigator.share({ title: 'WOVEN playtest feedback', text }); return; }
+    try { await navigator.share({ title: 'WOVEN playtest feedback', text: buildShareText() }); return; }
     catch (e) { if (e && e.name === 'AbortError') return; /* they cancelled the share sheet — don't force email instead */ }
   }
-  window.location.href = mailtoFeedbackLink(text);
+  window.location.href = mailtoFeedbackLink(buildSummaryText()); // no Share at all -> the address is already correctly set via mailto, no preamble needed
+});
+document.getElementById('emailFeedbackBtn').addEventListener('click', () => {
+  window.location.href = mailtoFeedbackLink(buildSummaryText()); // always mailto — this is the guaranteed-recipient path
 });
 document.getElementById('copySummaryBtn').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(buildSummaryText()); } catch (e) {}
+  try { await navigator.clipboard.writeText(buildShareText()); } catch (e) {}
   const btn = document.getElementById('copySummaryBtn');
   const orig = btn.textContent; btn.textContent = 'Copied!';
   setTimeout(() => { btn.textContent = orig; }, 1200);
