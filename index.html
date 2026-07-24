@@ -342,7 +342,7 @@
     <button id="undoBtn" class="icon-btn" aria-label="Undo">↶</button>
     <button id="redoBtn" class="icon-btn" aria-label="Redo">↷</button>
     <button id="restartBtn" class="icon-btn" aria-label="Restart">↻</button>
-    <button id="hintBtn" class="ghost"><span class="btn-icon">💡</span>Hint<span class="hint-cost">100</span></button>
+    <button id="hintBtn" class="ghost"><span class="btn-icon">💡</span>Hint<span class="hint-cost" id="hintCostBadge"></span></button>
   </div>
 </div>
 <div id="message"></div>
@@ -1366,13 +1366,15 @@ const SFX = {
 let sfxArmed = false;      // suppress transition sounds during level load
 let sfxPrev = { gates: new Set(), blend: false, solved: false };
 // ---- Coins + Hint (Zip-style: reveal the next correct cell of the solution) ----
-let coins = parseInt(localStorage.getItem('woven_coins') || '0', 10);
-const HINT_COST = 100, LEVEL_REWARD = 10;
+const HINT_COST = 50, LEVEL_REWARD = 10, STARTING_HINTS = 3;
+const STARTING_COINS = STARTING_HINTS * HINT_COST; // a new player can afford a hint from level 1, not after grinding 10 levels
+let coins = parseInt(localStorage.getItem('woven_coins') ?? String(STARTING_COINS), 10);
 const solutionCache = {};
 function saveCoins() { localStorage.setItem('woven_coins', String(coins)); }
 function updateCoins() {
   const c = document.getElementById('coinCount'); if (c) c.textContent = coins;
   const h = document.getElementById('hintBtn'); if (h) h.disabled = coins < HINT_COST;
+  const b = document.getElementById('hintCostBadge'); if (b) b.textContent = HINT_COST;
 }
 function solutionPaths(def) {
   if (def.id in solutionCache) return solutionCache[def.id];
@@ -1428,7 +1430,7 @@ document.getElementById('hapticsToggle').addEventListener('click', () => { hapti
 document.getElementById('optSubmitBtn').addEventListener('click', () => { document.getElementById('optionsOverlay').classList.remove('visible'); showSummary(); });
 document.getElementById('optResetBtn').addEventListener('click', () => {
   if (!window.confirm('Reset all progress, coins and tutorial hints?')) return;
-  progress = {}; coins = 0; seenFtue = new Set(); TM.reset();
+  progress = {}; coins = STARTING_COINS; seenFtue = new Set(); TM.reset();
   localStorage.removeItem('woven_progress'); localStorage.removeItem('woven_coins'); localStorage.removeItem('woven_ftue');
   saveCoins(); updateCoins(); levelIndex = 0; buildLevel(); playLevelTransition();
   document.getElementById('optionsOverlay').classList.remove('visible');
