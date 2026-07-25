@@ -769,7 +769,7 @@ function playableCells(def) {
   let n = 0; for (let i = 0; i < def.width * def.height; i++) if (!vm[i]) n++; return n;
 }
 const TM_QUESTIONS = {
-  diff: { title: 'Nice — what made that one tough?', opts: [['threads', 'Juggling the threads'], ['timing', 'The gate / order timing'], ['mechanic', "Didn't get the mechanic"], ['fine', 'Nothing — felt fine']] },
+  diff: { title: 'Nice — what made that one tough?' }, // opts are board-dependent — see diffOptionsFor()
   slow: { title: 'Before your first move — what were you working out?', opts: [['goal', 'What the goal is'], ['route', 'Planning my route'], ['symbol', 'Confused by a symbol'], ['distract', 'Got distracted']] },
   giveup: { title: 'Heading out — what stopped you here?', opts: [['toohard', 'Too hard right now'], ['nosolution', "Can't see the solution"], ['rules', 'The rules are confusing'], ['break', 'Just taking a break']] },
 };
@@ -1243,15 +1243,37 @@ function showSolveSheet(firstClear) {
 }
 function hideSolveSheet() { const s = document.getElementById('solveSheet'); if (s) s.classList.remove('visible'); }
 
+// The "what made that tough?" options are board-dependent — a level with no
+// gate has nothing to say about "gate timing", and a 2-thread level isn't
+// really about "juggling threads". Build only the options this specific board
+// can support; "Nothing — felt fine" always closes the list, and a
+// mechanic-agnostic fallback appears if nothing else applies (a plain level
+// can still just be a tricky route).
+function diffOptionsFor(def) {
+  const hasGate = (def.gates || []).length > 0;
+  const hasOtherMechanic = (def.weaveCells || []).length > 0 || (def.overlapNodes || []).length > 0
+    || (def.oneWay || []).length > 0 || (def.voidMask || []).some(Boolean)
+    || def.blendNode !== undefined || (def.walls || []).length > 0;
+  const isMultiThread = def.threads.length >= 3 || def.blendNode !== undefined;
+  const opts = [];
+  if (isMultiThread) opts.push(['threads', 'Juggling the threads']);
+  if (hasGate) opts.push(['timing', 'The gate / order timing']);
+  if (hasOtherMechanic) opts.push(['mechanic', "Didn't get the mechanic"]);
+  if (!opts.length) opts.push(['route', 'Just tricky routing']);
+  opts.push(['fine', 'Nothing — felt fine']);
+  return opts;
+}
+
 // Renders a multiple-choice question (options + ✎ Other free-text + ✕ skip) into
 // `container`. Shared by the solve sheet and the give-up overlay.
 function renderQuestion(container, qKey, def, opts) {
   const q = TM_QUESTIONS[qKey];
+  const qOpts = qKey === 'diff' ? diffOptionsFor(def) : q.opts;
   container.innerHTML = '';
   const finish = () => { container.innerHTML = '<div class="q-thanks">Thanks — noted ✓</div>'; };
   const title = document.createElement('div'); title.className = 'q-title'; title.textContent = q.title; container.appendChild(title);
   const wrap = document.createElement('div'); wrap.className = 'q-opts';
-  q.opts.forEach(([code, label]) => {
+  qOpts.forEach(([code, label]) => {
     const b = document.createElement('button'); b.className = 'q-opt'; b.textContent = label;
     b.addEventListener('click', () => { TM.answer(def, code); finish(); if (opts.onAnswer) opts.onAnswer(code); });
     wrap.appendChild(b);
