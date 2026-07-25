@@ -20,7 +20,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="author" content="Abhishek Dutta">
 <title>WOVEN — vertical slice (browser)</title>
+<!-- WOVEN — created by Abhishek Dutta. Playtest build; please don't redistribute without credit. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -289,9 +291,20 @@
   }
   #introMark { position: relative; display: inline-block; font-size: 42px; font-weight: 800; letter-spacing: 0.14em; padding-bottom: 15px; color: var(--ink); }
   #introMark::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 66px; height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--amber) 50%, var(--teal) 50%); }
-  #introTag { font-size: 14px; line-height: 1.55; color: var(--ink-soft); margin: 22px auto 28px; max-width: 250px; }
+  #introTag { font-size: 14px; line-height: 1.55; color: var(--ink-soft); margin: 22px auto 4px; max-width: 250px; }
+  #introByline { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-soft); opacity: 0.7; margin: 0 0 28px; text-transform: uppercase; }
   #introPlayBtn { width: 100%; justify-content: center; font-size: 17px; padding: 15px; }
   .overlay.visible #introCard { animation: cardRise 0.34s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+  /* Persistent authorship watermark — visible on every screen (incl. over
+     overlays, so a screenshot from any screen still carries it), decorative
+     only (never intercepts touches/clicks). */
+  #watermark {
+    position: fixed; left: 50%; bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%); z-index: 100; pointer-events: none;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--ink-soft); opacity: 0.45; white-space: nowrap;
+  }
 
   /* Adaptive level-end question — replaces the rate pills on a flagged level;
      also used inside the give-up overlay. Same warm sheet system. */
@@ -415,9 +428,12 @@
   <div id="introCard">
     <div id="introMark">WOVEN</div>
     <p id="introTag">Two or more threads. Fill every cell, and never let them cross.</p>
+    <p id="introByline">by Abhishek Dutta</p>
     <button class="primary" id="introPlayBtn">Play<span class="btn-icon">→</span></button>
   </div>
 </div>
+
+<div id="watermark">WOVEN · Abhishek Dutta</div>
 
 <script>
 // ============================================================
