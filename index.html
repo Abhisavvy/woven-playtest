@@ -660,6 +660,32 @@ class RulesEngine {
     this.moveLog = []; this.gestureStarts = []; this.redoScratch = [];
     this._replay();
   }
+  // Snap one thread straight back to an earlier cell on its OWN path — used by
+  // "tap a passed checkpoint to retract to it", an alternative to repeated
+  // Undo when the wrong turn was several checkpoints/strokes ago. tryRetract's
+  // gesture-floor guard exists for Undo/Redo integrity and would otherwise
+  // block this the moment it crossed an already-committed stroke, so this cuts
+  // the global moveLog directly instead (same technique undo() uses). Global
+  // move order still applies: any OTHER thread's moves made after this point
+  // are reverted too, exactly like Undo already does across threads.
+  retractThreadTo(ti, cell) {
+    const thread = this.threads[ti];
+    const pathIdx = thread.path.indexOf(cell);
+    if (pathIdx === -1 || pathIdx === thread.path.length - 1) return { ok: false };
+    let seen = 0, cutAt = -1;
+    for (let i = 0; i < this.moveLog.length; i++) {
+      if (this.moveLog[i].thread === ti) {
+        if (seen === pathIdx) { cutAt = i; break; }
+        seen++;
+      }
+    }
+    if (cutAt === -1) return { ok: false };
+    this.redoScratch = this.moveLog.slice(cutAt);
+    this.moveLog = this.moveLog.slice(0, cutAt);
+    this.gestureStarts = this.gestureStarts.filter((b) => b <= cutAt);
+    this._replay();
+    return { ok: true };
+  }
   _replay() {
     this.owner.fill(null);
     const n = this.grid.width * this.grid.height;
@@ -762,6 +788,8 @@ let seenFtue = new Set(JSON.parse(localStorage.getItem('woven_ftue') || '[]'));
 function markFtueSeen(k) { if (!seenFtue.has(k)) { seenFtue.add(k); localStorage.setItem('woven_ftue', JSON.stringify([...seenFtue])); } }
 const FTUE = [
   { k: 'draw', msg: 'Drag from a shape to draw its thread. Fill every cell — the threads can never cross.', test: () => true },
+  { k: 'shape', msg: 'The board doesn’t have to be a rectangle — a missing corner just isn’t part of it. Every cell that IS on the board still needs a thread through it.', test: (d) => (d.voidMask || []).some(Boolean) },
+  { k: 'walls', msg: 'A thick line between two cells blocks that crossing — you can’t pass through it. Every other cell still needs to be filled, so route around the wall.', test: (d) => (d.walls || []).length > 0 },
   { k: 'gate', msg: 'A gate stays shut until the matching-colour thread reaches the number on it. Draw that thread first.', test: (d) => (d.gates || []).some((g) => g.openTriggers.length === 1 && !(g.closeTriggers && g.closeTriggers.length)) },
   { k: 'weave', msg: 'A bridge cell: two threads must cross here — one goes OVER, the other UNDER. They share the square but never touch.', test: (d) => (d.weaveCells || []).length > 0 || (d.overlapNodes || []).length > 0 },
   { k: 'switch', msg: 'One checkpoint opens two gates at once.', test: (d) => (d.tags || []).includes('switch') },
@@ -794,7 +822,7 @@ const TM_QUESTIONS = {
 };
 const TM = {
   data: {},                                    // id -> cumulative record (persisted)
-  seq: 0, lastPromptSeq: -99, prompts: 0, dismissStreak: 0, cur: null,   // session-only anti-nag
+  seq: 0, lastPromptSeq: -99, prompts: 0, dismissStreak: 0, cur: null, hiddenAt: null,   // session-only anti-nag
   load() { try { this.data = JSON.parse(localStorage.getItem('woven_metrics') || '{}'); } catch (e) { this.data = {}; } },
   save() { try { localStorage.setItem('woven_metrics', JSON.stringify(this.data)); } catch (e) {} },
   reset() { this.data = {}; this.seq = 0; this.lastPromptSeq = -99; this.prompts = 0; this.dismissStreak = 0; this.cur = null; try { localStorage.removeItem('woven_metrics'); } catch (e) {} },
@@ -813,6 +841,12 @@ const TM = {
   clearDead() { if (this.cur) this.cur.deadFlagged = false; },
   invalid(cell) { if (!this.cur || cell === this.cur.lastInvalid) return; this.cur.lastInvalid = cell; this.bump('invalids'); },
   moved() { if (this.cur) this.cur.lastInvalid = -1; },
+  // A backgrounded tab/phone must not read as "thinking time" — push the
+  // level-start reference clock forward by however long it was hidden, so
+  // every Date.now()-this.cur.start elapsed-time read (timeMs, firstTouchMs)
+  // silently excludes it.
+  pause() { if (this.cur && this.hiddenAt === null) this.hiddenAt = Date.now(); },
+  resume() { if (this.cur && this.hiddenAt !== null) { this.cur.start += Date.now() - this.hiddenAt; this.hiddenAt = null; } },
   tierMedianMs(tier, cells, exceptId) {
     const times = Object.values(this.data).filter((r) => r.tier === tier && r.solved && r.id !== exceptId && r.timeMs > 0).map((r) => r.timeMs).sort((a, b) => a - b);
     if (times.length < 3) return cells * 900;   // seed from solution length until enough real solves land
@@ -822,7 +856,11 @@ const TM = {
     const flags = [], cells = playableCells(def);
     const invThresh = Math.max(5, Math.round(cells * 0.5));
     const med = this.tierMedianMs(def.tier, cells, def.id);
-    if (r.hints > 0 || r.restarts >= 2 || r.deadEnds > 0 || r.invalids >= invThresh || (med > 0 && r.timeMs > med * 2)) flags.push('diff');
+    // A first-time FTUE tip sits on screen (and counts as elapsed time) until
+    // the player's first move — exclude that reading window from the 'diff'
+    // time check, same reasoning the 'slow' flag below already applies.
+    const readMs = r.ftueShown ? (r.firstTouchMs || 0) : 0;
+    if (r.hints > 0 || r.restarts >= 2 || r.deadEnds > 0 || r.invalids >= invThresh || (med > 0 && (r.timeMs - readMs) > med * 2)) flags.push('diff');
     const slowThresh = (10 + 2 * def.tier) * 1000;
     if (!r.ftueShown && r.firstTouchMs !== null && r.firstTouchMs > slowThresh) flags.push('slow');
     return flags;
@@ -850,6 +888,7 @@ const TM = {
   dismiss() { this.dismissStreak++; },
 };
 TM.load();
+document.addEventListener('visibilitychange', () => { if (document.hidden) TM.pause(); else TM.resume(); });
 let solveSheetLevel = null;   // guards the once-per-level solve prompt/rating setup
 
 function buildLevel() {
@@ -1086,7 +1125,14 @@ function render() {
       const isPassed = i < thread.progress;
       const size = isNext ? mapper.cell * 0.24 : mapper.cell * 0.2;
       const opacity = isPassed ? 0.35 : (isNext ? 0.95 : 0.55);
-      if (isNext) svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size + 4, fill: COL[ti], opacity: 0.18 }));
+      if (isNext) {
+        svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size + 4, fill: COL[ti], opacity: 0.18 }));
+        // A dragging thumb often covers the very number it's heading toward —
+        // once the thread has actually started moving, add a pulsing ring big
+        // enough to peek out from under a covering thumb (the pre-touch invite
+        // ring already covers the untouched-start case, so skip the overlap).
+        if (thread.path.length > 1) svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size + 7, fill: 'none', stroke: COL[ti], 'stroke-width': 2, class: 'invite-ring' }));
+      }
       const glyph = THREAD_GLYPH[ti];
       if (glyph === 'circle') svg.appendChild(svgEl('circle', { cx: x, cy: y, r: size, fill: COL[ti], opacity }));
       else if (glyph === 'square') svg.appendChild(svgEl('rect', { x: x - size, y: y - size, width: size * 2, height: size * 2, rx: 4, fill: COL[ti], opacity }));
@@ -1536,7 +1582,20 @@ function handleDown(clientX, clientY) {
   // act — prefer a thread that can extend, else one that can retract.
   const cands = [];
   for (let ti = 0; ti < engine.threads.length; ti++) if (engine.threads[ti].head === cell) cands.push(ti);
-  if (!cands.length) return;
+  if (!cands.length) {
+    // Tapping a checkpoint already passed snaps that thread straight back to
+    // it — an alternative to dragging the head all the way back, or spamming
+    // Undo, after a wrong turn several checkpoints ago.
+    for (let ti = 0; ti < engine.threads.length; ti++) {
+      const thread = engine.threads[ti];
+      const cpIndex = thread.checkpoints.indexOf(cell);
+      if (cpIndex !== -1 && cpIndex < thread.progress) {
+        if (engine.retractThreadTo(ti, cell).ok) { SFX.retract(); render(); }
+        return;
+      }
+    }
+    return;
+  }
   let pick = cands.find((ti) => engine.grid.neighbors(cell).some((n) => engine.canExtend(ti, n)));
   if (pick === undefined) pick = cands.find((ti) => engine.threads[ti].path.length > 1);
   if (pick === undefined) pick = cands[0];
