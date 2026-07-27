@@ -21,6 +21,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="author" content="Abhishek Dutta">
+<meta name="color-scheme" content="light">
 <title>WOVEN — vertical slice (browser)</title>
 <!-- WOVEN — created by Abhishek Dutta. Playtest build; please don't redistribute without credit. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,6 +29,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
+    color-scheme: light; /* opt out of OS/browser forced-dark auto-adjustment —
+      WOVEN is deliberately single-theme; this makes that explicit instead of
+      implicit, so force-dark heuristics don't recolor elements like walls
+      (a low-opacity, already-dark SVG stroke) into invisibility. */
     --cream: #F3ECDD;
     --cream-panel: #FAF6EE;
     --ink: #3A332A;
