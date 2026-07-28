@@ -1324,17 +1324,28 @@ function hideSolveSheet() { const s = document.getElementById('solveSheet'); if 
 // can support; "Nothing — felt fine" always closes the list, and a
 // mechanic-agnostic fallback appears if nothing else applies (a plain level
 // can still just be a tricky route).
-function diffOptionsFor(def) {
+//
+// A concrete behavioral signal from THIS playthrough (a real dead-end, real
+// repeated restarts) is a more specific, more certain answer than a guess at
+// which mechanic was confusing, so those go first when they actually fired —
+// tailoring the question to "time taken and player actions", not just board
+// tags (Raj's report).
+function diffOptionsFor(def, r) {
   const hasGate = (def.gates || []).length > 0;
   const hasOtherMechanic = (def.weaveCells || []).length > 0 || (def.overlapNodes || []).length > 0
     || (def.oneWay || []).length > 0 || (def.voidMask || []).some(Boolean)
     || def.blendNode !== undefined || (def.walls || []).length > 0;
   const isMultiThread = def.threads.length >= 3 || def.blendNode !== undefined;
+  const mechOpts = [];
+  if (isMultiThread) mechOpts.push(['threads', 'Juggling the threads']);
+  if (hasGate) mechOpts.push(['timing', 'The gate / order timing']);
+  if (hasOtherMechanic) mechOpts.push(['mechanic', "Didn't get the mechanic"]);
+  if (!mechOpts.length) mechOpts.push(['route', 'Just tricky routing']);
+
   const opts = [];
-  if (isMultiThread) opts.push(['threads', 'Juggling the threads']);
-  if (hasGate) opts.push(['timing', 'The gate / order timing']);
-  if (hasOtherMechanic) opts.push(['mechanic', "Didn't get the mechanic"]);
-  if (!opts.length) opts.push(['route', 'Just tricky routing']);
+  if (r && r.deadEnds > 0) opts.push(['deadend', 'Got stuck / dead-ended']);
+  if (r && r.restarts >= 2) opts.push(['restarts', 'Had to restart a few times']);
+  opts.push(...mechOpts);
   opts.push(['fine', 'Nothing — felt fine']);
   return opts;
 }
@@ -1343,7 +1354,7 @@ function diffOptionsFor(def) {
 // `container`. Shared by the solve sheet and the give-up overlay.
 function renderQuestion(container, qKey, def, opts) {
   const q = TM_QUESTIONS[qKey];
-  const qOpts = qKey === 'diff' ? diffOptionsFor(def) : q.opts;
+  const qOpts = qKey === 'diff' ? diffOptionsFor(def, TM.data[def.id]) : q.opts;
   container.innerHTML = '';
   const finish = () => { container.innerHTML = '<div class="q-thanks">Thanks — noted ✓</div>'; };
   const title = document.createElement('div'); title.className = 'q-title'; title.textContent = q.title; container.appendChild(title);
