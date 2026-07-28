@@ -897,7 +897,7 @@ function buildLevel() {
   TM.startLevel(def);
   solveSheetLevel = null;
   sfxArmed = false; // don't fire state-change sounds during level load
-  hintCell = null; if (typeof hintTimer !== 'undefined' && hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+  hintCells = null; hintThread = null; if (typeof hintTimer !== 'undefined' && hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
   activeThread = null;
   lastHeadCells = {};
   const gridDim = Math.max(def.width, def.height);
@@ -1225,10 +1225,29 @@ function render() {
     }
   }
 
-  // Hint highlight — a pulsing target on the next correct cell (Zip-style reveal).
-  if (hintCell !== null) {
-    const [hx, hy] = cellCenter(hintCell);
-    svg.appendChild(svgEl('circle', { cx: hx, cy: hy, r: mapper.cell * 0.34, fill: 'none', stroke: '#C77A21', 'stroke-width': 3, 'stroke-dasharray': '4 4', class: 'invite-ring' }));
+  // Hint highlight — traces a dashed ghost line from the thread's head to its
+  // next checkpoint, with a pulsing ring on every cell along the way (a
+  // stronger ring on the checkpoint itself), plus a directional arrow right
+  // on the head pointing at the first step — the same "which way do I go
+  // RIGHT NOW" affordance Zip's hint uses, so the direction reads at a
+  // glance even before tracing the whole dashed line.
+  if (hintCells !== null && hintCells.length) {
+    const col = COL[hintThread] || '#C77A21';
+    const headCell = engine.threads[hintThread].head;
+    const pts = [headCell, ...hintCells].map((c) => cellCenter(c)).map(([x, y]) => `${x},${y}`).join(' ');
+    svg.appendChild(svgEl('polyline', { points: pts, fill: 'none', stroke: col, 'stroke-width': mapper.cell * 0.1, 'stroke-dasharray': '6 5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.55 }));
+    const [hr, hc] = rowCol(headCell, mapper.width), [nr, nc] = rowCol(hintCells[0], mapper.width);
+    const dx = Math.sign(nc - hc), dy = Math.sign(nr - hr);
+    const [ax, ay] = cellCenter(headCell), ar = mapper.cell * 0.32;
+    svg.appendChild(svgEl('polygon', {
+      points: `${ax + dx * ar},${ay + dy * ar} ${ax - dy * ar * 0.42 - dx * ar * 0.15},${ay - dx * ar * 0.42 - dy * ar * 0.15} ${ax + dy * ar * 0.42 - dx * ar * 0.15},${ay + dx * ar * 0.42 - dy * ar * 0.15}`,
+      fill: col, opacity: 0.9,
+    }));
+    hintCells.forEach((c, i) => {
+      const isLast = i === hintCells.length - 1;
+      const [hx, hy] = cellCenter(c);
+      svg.appendChild(svgEl('circle', { cx: hx, cy: hy, r: mapper.cell * (isLast ? 0.34 : 0.18), fill: 'none', stroke: col, 'stroke-width': isLast ? 3 : 2, 'stroke-dasharray': '4 4', class: 'invite-ring' }));
+    });
   }
 
   // Sound cues for state changes — only once a level is armed (never on load).
@@ -1482,7 +1501,7 @@ function solutionPaths(def) {
   solutionCache[def.id] = sol;
   return sol;
 }
-let hintCell = null, hintTimer = null;
+let hintCells = null, hintThread = null, hintTimer = null;
 function flash(text) { const m = document.getElementById('message'); m.textContent = text; m.className = 'hint visible'; setTimeout(() => { if (m.textContent === text) m.className = ''; }, 2200); }
 function useHint() {
   if (coins < HINT_COST) { flash('Not enough coins — you earn 10 per level'); return; }
@@ -1490,18 +1509,29 @@ function useHint() {
   if (!sol) { flash('No hint available for this level'); return; }
   const consider = []; if (activeThread !== null) consider.push(activeThread);
   for (let ti = 0; ti < engine.threads.length; ti++) if (!consider.includes(ti)) consider.push(ti);
-  let target = null;
+  let targetTi = null, targetPath = null;
   for (const ti of consider) {
     const cur = engine.threads[ti].path, s = sol[ti];
-    if (s && cur.length < s.length && cur.every((c, i) => s[i] === c)) { target = s[cur.length]; break; }
+    if (s && cur.length < s.length && cur.every((c, i) => s[i] === c)) {
+      // Trace all the way to the NEXT checkpoint, not just the next cell —
+      // a single step rarely resolved the "what should I do here" question a
+      // hint is meant to answer.
+      const cpSet = new Set(engine.threads[ti].checkpoints);
+      let end = cur.length;
+      while (end < s.length - 1 && !cpSet.has(s[end])) end++;
+      targetTi = ti; targetPath = s.slice(cur.length, end + 1);
+      break;
+    }
   }
-  if (target === null) { flash('A thread has strayed — Undo, then try a hint'); return; }
+  if (targetPath === null) { flash('A thread has strayed — Undo, then try a hint'); return; }
   coins -= HINT_COST; saveCoins(); updateCoins();
   TM.hint();
-  hintCell = target; render();
-  // Persist the reveal until the player moves; long fallback so it never lingers forever.
+  hintCells = targetPath; hintThread = targetTi; render();
+  // Persist the reveal until the player moves; long fallback so it never
+  // lingers forever, scaled a little for longer traces to give enough time
+  // to actually read the path.
   if (hintTimer) clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => { hintCell = null; render(); }, 12000);
+  hintTimer = setTimeout(() => { hintCells = null; hintThread = null; render(); }, 12000 + Math.max(0, targetPath.length - 1) * 1500);
 }
 
 // ---- Options menu (sound, haptics, submit feedback, reset) ----
@@ -1624,7 +1654,7 @@ function handleMove(clientX, clientY) {
     rejected = true;
   }
   // A hint clears once the player actually moves the thread.
-  if (engine.threads[ti].head !== h && hintCell !== null) { hintCell = null; if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; } }
+  if (engine.threads[ti].head !== h && hintCells !== null) { hintCells = null; hintThread = null; if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; } }
   render();
   if (rejected) { triggerShake(ti); SFX.error(); TM.invalid(cell); }
   else TM.moved();
