@@ -729,6 +729,26 @@ class RulesEngine {
     }
     return shared;
   }
+  // Read-only fill-accounting helper: which playable cells are not yet fully
+  // covered by any thread. Uses the exact same per-cell rules that
+  // fillTarget()/_sharedOverlapUnits() reduce to when summed (weave needs
+  // BOTH lanes claimed; overlap/blend need just one visit by any thread;
+  // every other cell needs an owner) — so this can never disagree with
+  // isSolved()'s fill check about whether the board is full.
+  unfilledCells() {
+    const out = [];
+    const n = this.grid.width * this.grid.height;
+    for (let i = 0; i < n; i++) {
+      const el = this.elements.elementAt(i);
+      if (el === ElementKind.VOID) continue;
+      if (el === ElementKind.WEAVE) {
+        if (this.elements.lane(i, Axis.H) === LaneState.EMPTY || this.elements.lane(i, Axis.V) === LaneState.EMPTY) out.push(i);
+      } else if (el === ElementKind.OVERLAP || el === ElementKind.BLEND) {
+        if (!this.threads.some((t) => t.path.includes(i))) out.push(i);
+      } else if (this.owner[i] === null) out.push(i);
+    }
+    return out;
+  }
   isSolved() {
     let sum = 0;
     for (const t of this.threads) sum += t.path.length;
@@ -840,20 +860,26 @@ const TM = {
   reset() { this.data = {}; this.seq = 0; this.lastPromptSeq = -99; this.prompts = 0; this.dismissStreak = 0; this.cur = null; try { localStorage.removeItem('woven_metrics'); } catch (e) {} },
   rec(def) {
     let r = this.data[def.id];
-    if (!r) r = this.data[def.id] = { id: def.id, tier: def.tier, tags: (def.tags || []).slice(), diff: def.diff || 'normal', timeMs: 0, firstTouchMs: null, undos: 0, redos: 0, restarts: 0, hints: 0, deadEnds: 0, invalids: 0, abandoned: 0, attempts: 0, solved: false, ftueShown: false, flags: [], a: null, aText: null, bestStars: 0, bestSwift: false, lastStars: 0, lastSwift: false };
+    if (!r) r = this.data[def.id] = { id: def.id, tier: def.tier, tags: (def.tags || []).slice(), diff: def.diff || 'normal', timeMs: 0, firstTouchMs: null, undos: 0, redos: 0, restarts: 0, hints: 0, deadEnds: 0, deadEndsUnfilled: 0, invalids: 0, abandoned: 0, attempts: 0, solved: false, ftueShown: false, flags: [], a: null, aText: null, bestStars: 0, bestSwift: false, lastStars: 0, lastSwift: false };
     return r;
   },
   // this.cur carries PER-ATTEMPT counters (undos/restarts/deadEnds/hints) in
   // parallel with the all-time cumulative ones on `r` — mastery scoring reads
   // only this attempt's counts, so a clean replay isn't penalized for mistakes
   // made on a much earlier attempt at the same level.
-  startLevel(def) { this.seq++; const r = this.rec(def); r.attempts++; this.cur = { id: def.id, start: Date.now(), firstTouchAt: null, deadFlagged: false, lastInvalid: -1, abandonedThisVisit: false, undos: 0, restarts: 0, deadEnds: 0, hints: 0, ftueShownThisAttempt: false }; this.save(); },
+  startLevel(def) { this.seq++; const r = this.rec(def); r.attempts++; this.cur = { id: def.id, start: Date.now(), firstTouchAt: null, deadFlagged: false, lastInvalid: -1, abandonedThisVisit: false, undos: 0, restarts: 0, deadEnds: 0, deadEndsUnfilled: 0, hints: 0, ftueShownThisAttempt: false }; this.save(); },
   _accrue() { if (!this.cur) return; const r = this.data[this.cur.id]; if (r && !r.solved) { r.timeMs += Date.now() - this.cur.start; this.cur.start = Date.now(); } },
   firstTouch() { if (!this.cur || this.cur.firstTouchAt !== null) return; this.cur.firstTouchAt = Date.now(); const r = this.data[this.cur.id]; if (r && r.firstTouchMs === null) { r.firstTouchMs = Math.max(0, Date.now() - this.cur.start); this.save(); } },
   ftueShown() { if (!this.cur) return; this.cur.ftueShownThisAttempt = true; const r = this.data[this.cur.id]; if (r && !r.ftueShown) { r.ftueShown = true; this.save(); } },
-  bump(field) { if (!this.cur) return; const r = this.data[this.cur.id]; if (r) { r[field]++; this.save(); } if (field in this.cur) this.cur[field]++; },
+  // Guard against a field that didn't exist on a record persisted before this
+  // field was introduced (a returning player's localStorage) — without this,
+  // `undefined++` would latch the counter at NaN forever instead of starting at 1.
+  bump(field) { if (!this.cur) return; const r = this.data[this.cur.id]; if (r) { r[field] = (r[field] || 0) + 1; this.save(); } if (field in this.cur) this.cur[field]++; },
   undo() { this.bump('undos'); }, redo() { this.bump('redos'); }, restart() { this.bump('restarts'); }, hint() { this.bump('hints'); },
-  deadEnd() { if (!this.cur || this.cur.deadFlagged) return; this.cur.deadFlagged = true; this.bump('deadEnds'); },
+  // kind: 'blocked' (genuinely no legal move) or 'unfilled' (every checkpoint
+  // reached but the board isn't full) — same underlying dead-end, but distinct
+  // player behaviour worth telling apart in the playtest export.
+  deadEnd(kind) { if (!this.cur || this.cur.deadFlagged) return; this.cur.deadFlagged = true; this.bump('deadEnds'); if (kind === 'unfilled') this.bump('deadEndsUnfilled'); },
   clearDead() { if (this.cur) this.cur.deadFlagged = false; },
   invalid(cell) { if (!this.cur || cell === this.cur.lastInvalid) return; this.cur.lastInvalid = cell; this.bump('invalids'); },
   moved() { if (this.cur) this.cur.lastInvalid = -1; },
@@ -981,6 +1007,14 @@ function render() {
   const justSolved = engine.isSolved() && !sfxPrev.solved; // only on the transition INTO solved
   const COL = def.threadColors || THREAD_COLOR; // per-level palette override (Blend uses yellow/green/blue)
 
+  // Dead-end cause split, computed once up top so both the board marking (below)
+  // and the message (bottom of this function) agree on the same numbers. Every
+  // checkpoint reached but the board not full is a DIFFERENT problem than being
+  // genuinely boxed in — see the message block for how this is used.
+  const isDeadEndNow = engine.isDeadEnd();
+  const allThreadsComplete = engine.threads.every((t) => t.progress >= t.checkpoints.length);
+  const unfilledCells = isDeadEndNow && allThreadsComplete ? engine.unfilledCells() : [];
+
   const isVoid = (i) => engine.elements.elementAt(i) === ElementKind.VOID;
   const hasVoids = (def.voidMask || []).some(Boolean);
 
@@ -1087,6 +1121,17 @@ function render() {
     svg.appendChild(svgEl('rect', { x: x - s - 2, y: y - s - 2, width: (s + 2) * 2, height: (s + 2) * 2, rx: 7, fill: 'rgba(58,51,42,0.07)' }));
     svg.appendChild(svgEl('circle', { cx: x, cy: y, r: s * 0.8, fill: 'none', stroke: INK, 'stroke-width': 2.4, opacity: 0.45 }));
     svg.appendChild(svgEl('circle', { cx: x, cy: y, r: s * 0.3, fill: INK, opacity: 0.4 }));
+  }
+
+  // Unfilled-cell hint — surfaces only for the "every checkpoint reached but
+  // the board isn't full" dead end (see the message block below): a soft
+  // neutral wash + dashed outline over each still-empty cell, the same
+  // low-opacity ink background language the weave/overlap markers above use
+  // for "something about this cell", so it reads as a hint, not an accusation.
+  for (const i of unfilledCells) {
+    const [x, y] = cellCenter(i);
+    const s = mapper.cell * 0.5 - 3;
+    svg.appendChild(svgEl('rect', { x: x - s, y: y - s, width: s * 2, height: s * 2, rx: 8, fill: 'rgba(58,51,42,0.09)', stroke: 'rgba(58,51,42,0.4)', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }));
   }
 
   // Gates — coloured by the thread whose checkpoint opens them, stamped with
@@ -1229,7 +1274,14 @@ function render() {
   // Heads
   for (let ti = 0; ti < engine.threads.length; ti++) {
     const h = engine.threads[ti].head;
-    if (def.blendNode !== undefined && ti === engine.blendThread && h === def.blendNode) continue; // covered by blend marker
+    if (def.blendNode !== undefined && h === def.blendNode) {
+      if (ti === engine.blendThread) continue; // covered by blend marker
+      // Once every feeder has arrived, the knot turns the merged colour and shows
+      // its "1" — a feeder's own head-dot sitting on that same cell would land on
+      // top of the merged colour and cover the number. Before that moment the dot
+      // sits inside its own matching pie-sector colour and reads fine, so leave it.
+      if (engine._feedersComplete() && engine.feeders.includes(ti)) continue;
+    }
     const [x, y] = cellCenter(h);
     const justMoved = lastHeadCells[ti] !== undefined && lastHeadCells[ti] !== h;
     const group = svgEl('g', { id: 'head-' + ti, class: 'head-marker' + (justMoved ? ' pulse' : '') });
@@ -1275,7 +1327,10 @@ function render() {
     showSolveSheet(firstClear);
   } else {
     hideSolveSheet();
-    if (engine.isDeadEnd()) { msg.textContent = 'Stuck — tap ↶ to step back, or ↻ to restart'; msg.className = 'deadend visible'; TM.deadEnd(); }
+    if (isDeadEndNow) {
+      if (unfilledCells.length) { msg.textContent = `Every square must be filled — ${unfilledCells.length} still empty. Tap ↶ to step back.`; msg.className = 'deadend visible'; TM.deadEnd('unfilled'); }
+      else { msg.textContent = 'Stuck — tap ↶ to step back, or ↻ to restart'; msg.className = 'deadend visible'; TM.deadEnd('blocked'); }
+    }
     else { TM.clearDead();
       if (untouched) { const f = ftueFor(def); if (f) { msg.textContent = f.msg; msg.className = 'hint visible'; markFtueSeen(f.k); TM.ftueShown(); } else msg.className = ''; }
       else msg.className = '';
@@ -1897,10 +1952,10 @@ function buildSummaryText() {
   const notable = LEVELS.map((l) => TM.data[l.id]).filter(Boolean).filter((r) => (r.flags && r.flags.length) || (progress[r.id] || {}).rating || r.abandoned > 0 || r.a);
   if (notable.length) {
     lines.push('▼ keep this block — it is the useful part');
-    lines.push('legend: L# | ★my-diff | mechanics | time | u=undo ro=redo r=restart h=hint dead=deadend inv=invalid | ft=1st-touch | rate | FLAG | A=answer');
+    lines.push('legend: L# | ★my-diff | mechanics | time | u=undo ro=redo r=restart h=hint dead=deadend(of which deadU=unfilled-board) inv=invalid | ft=1st-touch | rate | FLAG | A=answer');
     for (const r of notable) {
       const seg = ['L' + r.id + '@' + (LEVELS.findIndex((x) => x.id === r.id) + 1), '★' + (r.diff || 'normal'), (r.tags && r.tags.length ? r.tags.join(',') : 'base'), Math.round((r.timeMs || 0) / 1000) + 's',
-        `u${r.undos} ro${r.redos} r${r.restarts} h${r.hints} dead${r.deadEnds} inv${r.invalids}`,
+        `u${r.undos} ro${r.redos} r${r.restarts} h${r.hints} dead${r.deadEnds} deadU${r.deadEndsUnfilled || 0} inv${r.invalids}`,
         'ft' + (r.firstTouchMs !== null ? Math.round(r.firstTouchMs / 1000) + 's' : '-')];
       const rating = (progress[r.id] || {}).rating; if (rating) seg.push('rate:' + rating);
       if (r.flags && r.flags.length) seg.push('FLAG:' + r.flags.join(','));
