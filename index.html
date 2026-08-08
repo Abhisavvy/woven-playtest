@@ -1224,7 +1224,13 @@ function render() {
       if (cp === def.blendNode) return; // shown as the blend marker instead of a numbered glyph
       const [x, y] = cellCenter(cp);
       const isNext = i === thread.progress;
-      const isPassed = i < thread.progress;
+      // A thread starts already sitting on its checkpoint 1 (progress === 1 from
+      // construction), so without this it would be dimmed as "history" before the
+      // player has touched anything — which is exactly why playtesters reported
+      // the starting node "isn't numbered 1": it was drawn at 0.35 opacity next
+      // to a crisp 0.95 "2". The node you are standing on is current, not past.
+      const isHere = cp === thread.head;
+      const isPassed = i < thread.progress && !isHere;
       const size = isNext ? mapper.cell * 0.24 : mapper.cell * 0.2;
       const opacity = isPassed ? 0.35 : (isNext ? 0.95 : 0.55);
       if (isNext) {
@@ -1285,11 +1291,29 @@ function render() {
     const [x, y] = cellCenter(h);
     const justMoved = lastHeadCells[ti] !== undefined && lastHeadCells[ti] !== h;
     const group = svgEl('g', { id: 'head-' + ti, class: 'head-marker' + (justMoved ? ' pulse' : '') });
-    if (untouched && engine.threads[ti].path.length === 1) {
+    const showInviteRing = untouched && engine.threads[ti].path.length === 1;
+    if (showInviteRing) {
       group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.3, fill: 'none', stroke: COL[ti], 'stroke-width': 2, class: 'invite-ring' }));
     }
-    group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.15, fill: COL[ti] }));
-    group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.05, fill: '#ffffff' }));
+    // A solid head-dot parked on one of this thread's own numbered checkpoints
+    // would land right on top of that checkpoint's digit (this loop paints
+    // after the checkpoint glyphs). Draw a stroke-only ring around the glyph
+    // instead — same fill:none/stroke idiom as the invite-ring above — so the
+    // number stays legible while the head position still reads. Most visible
+    // at level start, where every thread's head sits on checkpoint "1", but it
+    // applies whenever the head rests on any of the thread's own checkpoints.
+    // The blend node is excluded: it never gets a numbered glyph from this
+    // loop (see the checkpoint-glyphs block) and its own head/ring is handled
+    // by the "Blend knot" block above — leave that pre-existing fix alone.
+    const onOwnCheckpoint = h !== def.blendNode && engine.threads[ti].checkpoints.includes(h);
+    if (showInviteRing) {
+      // Ring already drawn above; it doesn't cover the glyph, so no dot needed.
+    } else if (onOwnCheckpoint) {
+      group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.3, fill: 'none', stroke: COL[ti], 'stroke-width': 2 }));
+    } else {
+      group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.15, fill: COL[ti] }));
+      group.appendChild(svgEl('circle', { cx: x, cy: y, r: mapper.cell * 0.05, fill: '#ffffff' }));
+    }
     svg.appendChild(group);
     lastHeadCells[ti] = h;
   }
