@@ -1714,6 +1714,8 @@ document.addEventListener('click', (e) => { if (e.target.closest('button')) { en
 // ============================================================
 let gestureFloor = {};
 let isDown = false;
+let activePointerId = null; // the single pointer (finger/mouse) that owns the in-progress stroke — a second pointer must never steer or end it
+const livePointers = new Set(); // pointerIds currently down; lets us suppress retractThreadTo whenever more than one finger is on the glass
 
 function nearestCell(clientX, clientY) {
   const rect = svg.getBoundingClientRect();
@@ -1754,7 +1756,8 @@ function retractToward(ti, target) {
   }
 }
 
-function handleDown(clientX, clientY) {
+function handleDown(clientX, clientY, pointerId) {
+  if (isDown) return; // a stroke is already owned by another pointer — first finger wins; a second touch can neither steer nor retract it
   ensureAudio(); // resume the audio context on the user gesture
   const m = document.getElementById('message'); if (m.classList.contains('hint')) m.className = ''; // an FTUE hint never sits in the way of a drag
   const cell = nearestCell(clientX, clientY);
@@ -1767,13 +1770,17 @@ function handleDown(clientX, clientY) {
   if (!cands.length) {
     // Tapping a checkpoint already passed snaps that thread straight back to
     // it — an alternative to dragging the head all the way back, or spamming
-    // Undo, after a wrong turn several checkpoints ago.
-    for (let ti = 0; ti < engine.threads.length; ti++) {
-      const thread = engine.threads[ti];
-      const cpIndex = thread.checkpoints.indexOf(cell);
-      if (cpIndex !== -1 && cpIndex < thread.progress) {
-        if (engine.retractThreadTo(ti, cell).ok) { SFX.retract(); render(); }
-        return;
+    // Undo, after a wrong turn several checkpoints ago. Suppressed while a
+    // second pointer is on the glass so a second finger can never truncate
+    // the move log out from under a stroke.
+    if (livePointers.size <= 1) {
+      for (let ti = 0; ti < engine.threads.length; ti++) {
+        const thread = engine.threads[ti];
+        const cpIndex = thread.checkpoints.indexOf(cell);
+        if (cpIndex !== -1 && cpIndex < thread.progress) {
+          if (engine.retractThreadTo(ti, cell).ok) { SFX.retract(); render(); }
+          return;
+        }
       }
     }
     return;
@@ -1786,6 +1793,8 @@ function handleDown(clientX, clientY) {
   engine.beginGesture();
   TM.firstTouch();
   isDown = true;
+  activePointerId = pointerId;
+  if (pointerId !== undefined && svg.setPointerCapture) { try { svg.setPointerCapture(pointerId); } catch (err) {} }
 }
 
 function handleMove(clientX, clientY) {
@@ -1815,15 +1824,35 @@ function handleMove(clientX, clientY) {
 function endGesture() {
   if (!isDown) return;
   isDown = false;
+  if (activePointerId !== undefined && activePointerId !== null && svg.releasePointerCapture) { try { svg.releasePointerCapture(activePointerId); } catch (err) {} }
+  activePointerId = null;
   if (engine) { engine.endGesture(); render(); } // drop empty taps; refresh undo/redo state
 }
-svg.addEventListener('pointerdown', (e) => handleDown(e.clientX, e.clientY));
-svg.addEventListener('mousedown', (e) => handleDown(e.clientX, e.clientY));
-window.addEventListener('pointermove', (e) => handleMove(e.clientX, e.clientY));
-window.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
-window.addEventListener('pointerup', endGesture);
-window.addEventListener('pointercancel', endGesture);
-window.addEventListener('mouseup', endGesture);
+// Bind exactly one input path. Environments that support PointerEvent report
+// mouse input through it too, so binding both pointer and mouse listeners
+// would run handleDown/handleMove (and therefore render()) twice per
+// interaction — this picks one path via feature detection instead.
+if (window.PointerEvent) {
+  svg.addEventListener('pointerdown', (e) => {
+    livePointers.add(e.pointerId);
+    handleDown(e.clientX, e.clientY, e.pointerId);
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== activePointerId) return; // ignore every pointer but the one that owns the current stroke
+    handleMove(e.clientX, e.clientY);
+  });
+  const releasePointer = (e) => {
+    livePointers.delete(e.pointerId);
+    if (e.pointerId !== activePointerId) return;
+    endGesture();
+  };
+  window.addEventListener('pointerup', releasePointer);
+  window.addEventListener('pointercancel', releasePointer);
+} else {
+  svg.addEventListener('mousedown', (e) => handleDown(e.clientX, e.clientY));
+  window.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
+  window.addEventListener('mouseup', endGesture);
+}
 
 // Undo/Redo now walk the FULL move history (whole strokes, across threads),
 // not just the current drag — the real fix for "I can only Restart".
