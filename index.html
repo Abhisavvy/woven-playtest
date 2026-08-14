@@ -1767,19 +1767,35 @@ function useHint() {
   let targetTi = null, target = null;
   for (const ti of consider) {
     const cur = engine.threads[ti].path, s = sol[ti];
-    if (s && cur.length < s.length && cur.every((c, i) => s[i] === c)) { targetTi = ti; target = s[cur.length]; break; }
+    if (!s || cur.length >= s.length || !cur.every((c, i) => s[i] === c)) continue;
+    // Only offer a thread whose next solution cell is legal ON THE LIVE BOARD.
+    // The solver's route can be unreachable from the current position — most
+    // often a gate that is shut at this point in the order — and the old code
+    // committed it blind, so the player was charged 50 coins for a move that
+    // never landed. Measured across the shipped build: that happened on 56 of
+    // the 117 levels.
+    if (!engine.canExtend(ti, s[cur.length])) continue;
+    targetTi = ti; target = s[cur.length]; break;
   }
-  if (target === null) { flash('A thread has strayed — Undo, then try a hint'); return; }
-  coins -= HINT_COST; saveCoins(); updateCoins();
-  TM.hint();
+  if (target === null) { flash('No hint fits this position — Undo a move, then try again'); return; }
   // Commit the move for real, exactly as a drag would — Zip's own hint
   // extends the actual path too ("We've extended your path!"), it isn't a
   // preview. Undo can still roll this back like any other move.
   gestureFloor[targetTi] = engine.threads[targetTi].path.length;
   engine.beginGesture();
   const beforeCp = engine.threads[targetTi].progress;
-  engine.tryExtend(targetTi, target);
+  const extended = engine.tryExtend(targetTi, target);
   engine.endGesture();
+  // Charge only once the move has actually landed. canExtend above should make
+  // this unreachable, but the two must not be allowed to disagree silently:
+  // the charge follows the move, never precedes it.
+  if (!extended || extended.ok !== true) {
+    flash('No hint fits this position — Undo a move, then try again');
+    render();
+    return;
+  }
+  coins -= HINT_COST; saveCoins(); updateCoins();
+  TM.hint();
   if (engine.threads[targetTi].progress > beforeCp) SFX.checkpoint(engine.threads[targetTi].progress - 1); else SFX.step();
   // Arrow at the new head, pointing toward whatever comes next in the
   // solution — the "which way do I go now" cue Zip's hint shows.
