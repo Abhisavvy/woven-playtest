@@ -122,6 +122,7 @@
   #tierLabel { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); text-transform: uppercase; }
   #progressTrack { height: 3px; margin: 2px 20px 0; border-radius: 2px; background: rgba(58,51,42,0.09); overflow: hidden; }
   #progressFill { height: 100%; width: 0%; border-radius: 2px; background: linear-gradient(90deg, var(--amber), var(--teal)); transition: width 0.55s cubic-bezier(0.3, 0.85, 0.3, 1); }
+  #boardWrap.board-top-anchored { align-items: flex-start; }
   #boardWrap {
     flex: 1;
     display: flex;
@@ -962,6 +963,67 @@ TM.load();
 document.addEventListener('visibilitychange', () => { if (document.hidden) TM.pause(); else TM.resume(); });
 let solveSheetLevel = null;   // guards the once-per-level solve prompt/rating setup
 
+// Cell sizing — fits the board to #boardWrap's LIVE content box
+// (getBoundingClientRect() minus its own CSS padding), not a hardcoded
+// square. MAX_CELL is a deliberate, unchanged ceiling: every board whose
+// larger dimension is already <=5 hits this cap under BOTH the old and new
+// formula (the box is comfortably bigger than 5*58 in both axes on any
+// phone-sized viewport), so those levels render pixel-identically to before
+// this change. Only boards that were being squeezed by the old "size from
+// the larger dimension against a square" rule (max dimension 6+) actually
+// change size, and only upward, toward MAX_CELL, never past it.
+const MAX_CELL = 58, MIN_CELL = 26;
+const FALLBACK_BOARD = 336; // the old square-fit constant, used only if
+  // #boardWrap hasn't been laid out yet (e.g. queried before first paint) —
+  // same rule this feature replaces, kept as a safety net so a 0x0 rect never
+  // produces a broken (zero/negative) cell size instead of a sane fallback.
+// Tallest the banner gets at this max-width/font-size: ~4 wrapped lines.
+const BANNER_MAX_H = 130;
+function computeCellSize(def) {
+  const gridDim = Math.max(def.width, def.height);
+  const wrap = document.getElementById('boardWrap');
+  let availW = 0, availH = 0;
+  if (wrap) {
+    const rect = wrap.getBoundingClientRect();
+    const cs = window.getComputedStyle(wrap);
+    const padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
+    const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+    availW = rect.width - padL - padR;
+    availH = rect.height - padT - padB;
+    // The FTUE / dead-end banner is position:fixed and floats OVER this area.
+    // Before the board could grow it always sat below a short board; a tall board
+    // now reaches it and the banner covers live cells (measured: 125px of overlap
+    // hiding 8 playable cells on L61, at full opacity — including the very cells
+    // the "N squares still empty" message points at).
+    // Reserve its zone from a CONSTANT, not from its live rect: the element is
+    // empty at level-build time and only grows when a message is set, so
+    // measuring it here reads a height that is about to be wrong.
+    // The board is CENTRED in the wrap, so boardBottom = wrapCentre + boardH/2;
+    // keeping that above the banner zone means boardH <= 2*(zoneTop - wrapCentre).
+    // Costs nothing for short or wide boards, where availW/def.width binds first.
+    const banner = document.getElementById('message');
+    if (banner) {
+      const bcs = window.getComputedStyle(banner);
+      const bottomOffset = parseFloat(bcs.bottom) || 0;
+      const zoneTop = window.innerHeight - bottomOffset - BANNER_MAX_H;
+      // Centring makes a bottom reserve cost DOUBLE (protecting the bottom wastes
+      // the same again at the top). So when a board is tall enough to reach the
+      // banner, anchor it to the top of the wrap and reserve only what's needed —
+      // on L61 that is a 44px cell instead of 32px, against 30px before this work.
+      const contentTop = rect.top + padT;
+      const roomTopAnchored = zoneTop - contentTop;
+      if (roomTopAnchored > 0 && roomTopAnchored < availH) {
+        availH = roomTopAnchored;
+        wrap.classList.add('board-top-anchored');
+      } else {
+        wrap.classList.remove('board-top-anchored');
+      }
+    }
+  }
+  if (!(availW > 0) || !(availH > 0)) return Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(FALLBACK_BOARD / gridDim)));
+  return Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(Math.min(availW / def.width, availH / def.height))));
+}
+
 function buildLevel() {
   const def = currentLevelDef();
   engine = buildEngine(def);
@@ -971,9 +1033,7 @@ function buildLevel() {
   hintCells = null; hintThread = null; if (typeof hintTimer !== 'undefined' && hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
   activeThread = null;
   lastHeadCells = {};
-  const gridDim = Math.max(def.width, def.height);
-  const MAX_BOARD = 336, MAX_CELL = 58, MIN_CELL = 26;
-  const cell = Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(MAX_BOARD / gridDim)));
+  const cell = computeCellSize(def);
   mapper = { cell, width: def.width, height: def.height, originOffset: cell * 0.5 };
   render();
   hideSolveSheet();
@@ -1003,6 +1063,25 @@ function render() {
   svg.setAttribute('height', boardH);
   svg.innerHTML = '';
 
+  // Board-frame constants that were fixed pixel values under the old
+  // constant-cell system — now cell-relative (each ratio anchored so
+  // cell===MAX_CELL(58) reproduces the exact original number, e.g.
+  // 58*14/58===14) with a floor so hairlines/wall bars/corners never vanish
+  // or invert at the small end of the MIN_CELL..MAX_CELL range. Values that
+  // were already cell-relative (thread width, checkpoint size, gate badge
+  // radius/font — the Math.max(8, cell*0.18)-style expressions) are
+  // untouched; they already do what this block does.
+  const panelRxOuter = Math.max(8, mapper.cell * 14 / 58);
+  const panelRxInner = Math.max(7, panelRxOuter - 1);
+  const gridStroke = Math.max(0.9, mapper.cell * 1.2 / 58);
+  const gridEdgeStroke = Math.max(1.1, mapper.cell * 1.5 / 58);
+  const gridInset = Math.max(3, mapper.cell * 4 / 58);
+  const voidGridInset = Math.max(1.5, mapper.cell * 2 / 58);
+  const voidCornerR = Math.max(4, mapper.cell * 8 / 58);
+  const wallStroke = Math.max(1.5, mapper.cell * 3 / 58);
+  const gateBarThin = Math.max(4, mapper.cell * 7 / 58);
+  const gateBarMargin = Math.max(5, mapper.cell * 8 / 58);
+
   const untouched = engine.threads.every((t) => t.path.length === 1);
   const justSolved = engine.isSolved() && !sfxPrev.solved; // only on the transition INTO solved
   const COL = def.threadColors || THREAD_COLOR; // per-level palette override (Blend uses yellow/green/blue)
@@ -1020,16 +1099,16 @@ function render() {
 
   if (!hasVoids) {
     // Full rectangular board: one rounded panel + full grid.
-    svg.appendChild(svgEl('rect', { x: 0, y: 0, width: boardW, height: boardH, fill: '#FBF7EF', rx: 14 }));
-    svg.appendChild(svgEl('rect', { x: 1, y: 1, width: boardW - 2, height: boardH - 2, rx: 13, fill: 'none', stroke: '#EADFC9', 'stroke-width': 1.5 }));
+    svg.appendChild(svgEl('rect', { x: 0, y: 0, width: boardW, height: boardH, fill: '#FBF7EF', rx: panelRxOuter }));
+    svg.appendChild(svgEl('rect', { x: 1, y: 1, width: boardW - 2, height: boardH - 2, rx: panelRxInner, fill: 'none', stroke: '#EADFC9', 'stroke-width': gridEdgeStroke }));
     const gridGroup = svgEl('g', { opacity: 0.55 });
-    for (let c = 1; c < def.width; c++) gridGroup.appendChild(svgEl('line', { x1: c * mapper.cell, y1: 4, x2: c * mapper.cell, y2: boardH - 4, stroke: GRID_LINE, 'stroke-width': 1.2 }));
-    for (let r = 1; r < def.height; r++) gridGroup.appendChild(svgEl('line', { x1: 4, y1: r * mapper.cell, x2: boardW - 4, y2: r * mapper.cell, stroke: GRID_LINE, 'stroke-width': 1.2 }));
+    for (let c = 1; c < def.width; c++) gridGroup.appendChild(svgEl('line', { x1: c * mapper.cell, y1: gridInset, x2: c * mapper.cell, y2: boardH - gridInset, stroke: GRID_LINE, 'stroke-width': gridStroke }));
+    for (let r = 1; r < def.height; r++) gridGroup.appendChild(svgEl('line', { x1: gridInset, y1: r * mapper.cell, x2: boardW - gridInset, y2: r * mapper.cell, stroke: GRID_LINE, 'stroke-width': gridStroke }));
     svg.appendChild(gridGroup);
   } else {
     // Custom shape: paint only playable cells, so void cells are truly absent
     // (the page shows through and the board's drop-shadow hugs the real shape).
-    const R = 8; // rounded radius on corners exposed to the outside
+    const R = voidCornerR; // rounded radius on corners exposed to the outside
     for (let r = 0; r < def.height; r++) {
       for (let c = 0; c < def.width; c++) {
         const i = cidx(r, c, def.width);
@@ -1061,12 +1140,12 @@ function render() {
         const dnVoid = r === def.height - 1 || isVoid(i + def.width);
         const upVoid = r === 0 || isVoid(i - def.width);
         const lfVoid = c === 0 || isVoid(i - 1);
-        if (!rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0 + 2, x2: x1, y2: y1 - 2, stroke: GRID_LINE, 'stroke-width': 1.2, opacity: 0.55 }));
-        if (!dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0 + 2, y1, x2: x1 - 2, y2: y1, stroke: GRID_LINE, 'stroke-width': 1.2, opacity: 0.55 }));
-        if (upVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x1, y2: y0, stroke: '#EADFC9', 'stroke-width': 1.5 }));
-        if (rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
-        if (dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
-        if (lfVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x0, y2: y1, stroke: '#EADFC9', 'stroke-width': 1.5 }));
+        if (!rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0 + voidGridInset, x2: x1, y2: y1 - voidGridInset, stroke: GRID_LINE, 'stroke-width': gridStroke, opacity: 0.55 }));
+        if (!dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0 + voidGridInset, y1, x2: x1 - voidGridInset, y2: y1, stroke: GRID_LINE, 'stroke-width': gridStroke, opacity: 0.55 }));
+        if (upVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x1, y2: y0, stroke: '#EADFC9', 'stroke-width': gridEdgeStroke }));
+        if (rtVoid) gridGroup.appendChild(svgEl('line', { x1, y1: y0, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': gridEdgeStroke }));
+        if (dnVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1, x2: x1, y2: y1, stroke: '#EADFC9', 'stroke-width': gridEdgeStroke }));
+        if (lfVoid) gridGroup.appendChild(svgEl('line', { x1: x0, y1: y0, x2: x0, y2: y1, stroke: '#EADFC9', 'stroke-width': gridEdgeStroke }));
       }
     }
     svg.appendChild(gridGroup);
@@ -1078,11 +1157,11 @@ function render() {
     const [r, c] = rowCol(i, def.width);
     if (c < def.width - 1 && engine.elements.hasWall(i, i + 1)) {
       const x = (c + 1) * mapper.cell;
-      svg.appendChild(svgEl('line', { x1: x, y1: r * mapper.cell + 3, x2: x, y2: (r + 1) * mapper.cell - 3, stroke: INK, 'stroke-width': 3, 'stroke-linecap': 'round', opacity: 0.65 }));
+      svg.appendChild(svgEl('line', { x1: x, y1: r * mapper.cell + wallStroke, x2: x, y2: (r + 1) * mapper.cell - wallStroke, stroke: INK, 'stroke-width': wallStroke, 'stroke-linecap': 'round', opacity: 0.65 }));
     }
     if (r < def.height - 1 && engine.elements.hasWall(i, i + def.width)) {
       const y = (r + 1) * mapper.cell;
-      svg.appendChild(svgEl('line', { x1: c * mapper.cell + 3, y1: y, x2: (c + 1) * mapper.cell - 3, y2: y, stroke: INK, 'stroke-width': 3, 'stroke-linecap': 'round', opacity: 0.65 }));
+      svg.appendChild(svgEl('line', { x1: c * mapper.cell + wallStroke, y1: y, x2: (c + 1) * mapper.cell - wallStroke, y2: y, stroke: INK, 'stroke-width': wallStroke, 'stroke-linecap': 'round', opacity: 0.65 }));
     }
   }
 
@@ -1143,7 +1222,7 @@ function render() {
     const mx = (fx + tx) / 2, my = (fy + ty) / 2;
     const [fr] = rowCol(g.from, def.width), [tr] = rowCol(g.to, def.width);
     const sameRow = fr === tr;
-    const gw = sameRow ? 7 : mapper.cell * 0.82, gh = sameRow ? mapper.cell * 0.82 : 7;
+    const gw = sameRow ? gateBarThin : mapper.cell * 0.82, gh = sameRow ? mapper.cell * 0.82 : gateBarThin;
     const open = engine.gateState.isOpen(g.id);
     const br = Math.max(8, mapper.cell * 0.18);
     const toggling = g.closeTriggers && g.closeTriggers.length > 0;
@@ -1185,7 +1264,7 @@ function render() {
       const opTxt = g.openOp === 'AnyOf' ? ' or ' : ' + ';
       const labelLen = g.openTriggers.map((t) => String(t.checkpointIndex + 1)).join(opTxt).length;
       const pw = labelLen * F * 0.58 + F, ph = F * 1.7;
-      const barMargin = 8;
+      const barMargin = gateBarMargin;
       const gwFinal = sameRow ? gw : Math.max(gw, pw + barMargin * 2);
       const ghFinal = sameRow ? Math.max(gh, ph + barMargin * 2) : gh;
       svg.appendChild(svgEl('rect', { x: mx - gwFinal / 2, y: my - ghFinal / 2, width: gwFinal, height: ghFinal, rx: 3, class: 'gate-bar', fill: '#6b5f4d', opacity: open ? 0.2 : 0.9 }));
@@ -1389,6 +1468,32 @@ function render() {
   }
   sfxPrev = { gates: curGates, blend: curBlend, solved: curSolved };
 }
+
+// Re-fit on viewport change — MANDATORY now that cell size depends on the
+// live #boardWrap box (harmless while cell came from a constant; now a
+// correctness requirement, else rotating the phone or the mobile URL-bar/
+// keyboard showing or hiding leaves the board sized for a box that no
+// longer exists). Only recomputes mapper + redraws — the exact same two
+// calls buildLevel() itself makes — so it can never touch the move log,
+// gesture state, or an in-progress drag; a drag's own pointermove handler
+// re-reads the SVG's live bounding rect on every call regardless (see
+// nearestCell), so it stays correct across a mid-drag resize too.
+let refitTimer = null;
+function refitBoard() {
+  if (!mapper || !engine) return; // nothing built yet
+  const def = currentLevelDef();
+  const cell = computeCellSize(def);
+  if (cell === mapper.cell) return; // no visual change — skip the redundant render
+  mapper = { cell, width: def.width, height: def.height, originOffset: cell * 0.5 };
+  render();
+}
+function scheduleRefit() {
+  if (refitTimer) clearTimeout(refitTimer);
+  refitTimer = setTimeout(() => { refitTimer = null; refitBoard(); }, 120);
+}
+window.addEventListener('resize', scheduleRefit);
+window.addEventListener('orientationchange', scheduleRefit);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRefit);
 
 function playLevelTransition() {
   svg.classList.remove('entering');
